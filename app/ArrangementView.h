@@ -1,0 +1,56 @@
+#pragma once
+#include <juce_gui_basics/juce_gui_basics.h>
+#include "ProjectModel.h"
+#include "Theme.h"
+#include <functional>
+#include <memory>
+#include <vector>
+
+// Vista de arranjo: cabeçalhos de trilha, régua com o loop, e os clips na linha do tempo.
+class ArrangementView : public juce::Component, private juce::ChangeListener, private juce::Timer
+{
+public:
+    explicit ArrangementView (ProjectModel&);
+    ~ArrangementView() override;
+
+    std::function<void (double beats)>  onSeek;
+    std::function<float (int trackId)>  meterProvider;
+    std::function<juce::String (int)>   deviceSummary;
+
+    void setPlayhead (double beats);
+    void setLoopEnabled (bool on);
+    void refresh();                       // recria os cabeçalhos
+    void grabFocus();
+    void zoom (double factor);
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+    static constexpr int headerWidth = 210, rulerHeight = 28, trackHeight = 78;
+
+private:
+    class Lanes;
+    class Ruler;
+    class Header;
+    friend class Lanes;
+    friend class Ruler;
+    friend class Header;
+
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void timerCallback() override;
+    void syncPositions();
+    void updateSizes();
+    static juce::Colour colourFor (int trackId);
+
+    ProjectModel& project;
+    double ppb = 22.0;                    // pixels por beat
+    double playhead = 0.0;
+    bool loopEnabled = true;
+
+    std::unique_ptr<Lanes> lanes;
+    std::unique_ptr<Ruler> ruler;
+    std::vector<std::unique_ptr<Header>> headers;
+    juce::Viewport viewport;
+    juce::Component headerHolder, rulerHolder;
+    juce::TextButton addTrackButton { "+ Trilha MIDI" };
+};

@@ -1,0 +1,45 @@
+#pragma once
+#include <juce_events/juce_events.h>
+#include "Arrangement.h"
+#include <functional>
+#include <memory>
+#include <vector>
+
+// Estado do projeto: trilhas, clips, seleção e região de loop. Vive na thread principal.
+// O engine de áudio e as views ouvem os callbacks.
+class ProjectModel : public juce::ChangeBroadcaster
+{
+public:
+    std::vector<std::unique_ptr<roll::Track>> tracks;
+    int selectedTrackId = -1, selectedClipId = -1;
+    double loopStart = 0.0, loopEnd = 16.0;
+    double totalBeats = 256.0;                       // 64 compassos visíveis (cresce com os clips)
+
+    std::function<void (int trackId)> onTrackAdded, onTrackRemoved;   // removed: antes de apagar
+    std::function<void (int trackId)> onTrackNotes;                   // notas da trilha mudaram
+    std::function<void()> onMixerChanged;
+    std::function<void()> onSelectionChanged;                         // trilha/clip selecionados mudaram
+    std::function<void()> onLoopChanged;
+
+    roll::Track*     track (int id) const;
+    roll::Track*     selectedTrack() const { return track (selectedTrackId); }
+    roll::Placement* selectedClip() const;
+    int  trackIndex (int id) const;
+
+    roll::Track* addTrack();
+    void removeTrack (int id);
+    void selectTrack (int id);
+    void selectClip (int trackId, int clipId);
+
+    roll::Placement* addClip (int trackId, double start, double length);
+    void deleteClip (int trackId, int clipId);
+    // move para outra trilha/posição; devolve o novo id do clip (ou -1 se não coube)
+    int  moveClip (int fromTrack, int clipId, int toTrack, double newStart);
+    void notifyTrackNotes (int trackId);
+    void notifyMixer()   { if (onMixerChanged) onMixerChanged(); sendChangeMessage(); }
+    void setLoop (double s, double e);
+    void growTo (double beats);
+
+private:
+    int nextTrackId = 1;
+};

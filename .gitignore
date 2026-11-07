@@ -1,0 +1,74 @@
+# ==============================================================================
+# Project Freedom - .gitignore
+# C++ / CMake / Visual Studio / JUCE 8
+# ==============================================================================
+
+# Build & Compilation directories
+build/
+build*/
+out/
+bin/
+obj/
+x64/
+x86/
+ARM64/
+Debug/
+Release/
+
+# CMake artifacts & FetchContent
+CMakeUserPresets.json
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+CTestTestfile.cmake
+cmake_install.cmake
+_deps/
+
+# Visual Studio files & caches
+.vs/
+*.suo
+*.user
+*.userosv
+*.sln.docstates
+*.vcxproj.user
+
+# Visual Studio Code & CLion / JetBrains
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*~
+
+# Compiled Binaries & Intermediate files
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.so
+*.dylib
+*.exe
+*.exp
+*.ilk
+*.pdb
+*.idb
+
+# JUCE, Audio Scans & Logs
+*.log
+build.log
+scan_results.xml
+vst_scan.cache
+*.crash
+
+# OS Generated Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.Spotlight-V100
+.Trashes

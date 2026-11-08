@@ -7,8 +7,8 @@
 
 // Lista de instrumentos detectados. Duplo clique (ou Enter) carrega na trilha.
 class BrowserPanel : public juce::Component,
-                     private juce::ListBoxModel,
-                     private juce::ChangeListener
+                     private juce::ChangeListener,
+                     private juce::KeyListener
 {
 public:
     explicit BrowserPanel (PluginScanner&);
@@ -18,28 +18,31 @@ public:
 
     void setStatus (const juce::String& text) { status.setText (text, juce::dontSendNotification); }
     void refresh();
-    void grabFocus() { listBox.grabKeyboardFocus(); }
-    int  shownCount() const { return static_cast<int> (shown.size()); }
+    void grabFocus();
 
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
-    int  getNumRows() override { return static_cast<int> (shown.size()); }
-    void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
-    void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override { load (row); }
-    void returnKeyPressed (int row) override { load (row); }
+    class TreeItem;
+    class PluginTree;
+
+    bool keyPressed (const juce::KeyPress&, juce::Component*) override;
+    bool loadSelectedPlugin();
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
-    void load (int row);
+    void load (const juce::PluginDescription&);
+    void saveTreeState();
+    juce::File treeStateFile() const;
 
     PluginScanner& scanner;
     juce::Label title { {}, "Plugins" };
     juce::TextEditor search;
-    juce::ListBox listBox { "plugins", this };
+    std::unique_ptr<PluginTree> tree;
     juce::TextButton rescanButton { "Rescan" };
     juce::TextButton allButton { "Todos" }, instrumentsButton { "Instrumentos" }, effectsButton { "Efeitos" };
     enum class Filter { All, Instruments, Effects } filter = Filter::All;
     void setFilter (Filter f);
     juce::Label status;
-    std::vector<juce::PluginDescription> shown;
+    std::unique_ptr<juce::XmlElement> opennessBeforeSearch;
+    bool searchActive = false, rebuildingTree = false;
 };

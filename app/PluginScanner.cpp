@@ -20,6 +20,18 @@ PluginScanner::~PluginScanner()
     stopThread (8000);
 }
 
+std::vector<juce::File> PluginScanner::searchRoots() const
+{
+    std::vector<juce::File> roots;
+    for (int i = 0; i < formatManager.getNumFormats(); ++i)
+    {
+        const auto locations = formatManager.getFormat (i)->getDefaultLocationsToSearch();
+        for (int path = 0; path < locations.getNumPaths(); ++path)
+            roots.push_back (locations[path]);
+    }
+    return roots;
+}
+
 void PluginScanner::startScan()
 {
     if (! isThreadRunning())

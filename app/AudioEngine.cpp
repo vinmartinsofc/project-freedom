@@ -266,6 +266,21 @@ void AudioEngine::addDevice (int trackId, const juce::PluginDescription& desc, s
 {
     if (find (trackId) == nullptr) { onDone ("Trilha inexistente.", 0); return; }
 
+    const auto pluginIdentifier = desc.createIdentifierString();
+    for (const auto& device : find (trackId)->devices)
+        if (device.pluginIdentifier == pluginIdentifier)
+        {
+            onDone ({}, device.id);
+            return;
+        }
+
+    const auto pendingKey = std::make_pair (trackId, pluginIdentifier.toStdString());
+    if (! pendingPluginLoads.insert (pendingKey).second)
+    {
+        onDone ("Este plugin já está sendo carregado nesta trilha.", 0);
+        return;
+    }
+
     double sampleRate = 44100.0;
     int blockSize = 512;
     if (auto* dev = deviceManager.getCurrentAudioDevice())
@@ -275,8 +290,10 @@ void AudioEngine::addDevice (int trackId, const juce::PluginDescription& desc, s
     }
 
     formatManager.createPluginInstanceAsync (desc, sampleRate, blockSize,
-        [this, trackId, onDone] (std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error)
+        [this, trackId, pluginIdentifier, pendingKey, onDone]
+        (std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error)
         {
+            pendingPluginLoads.erase (pendingKey);
             auto* t = find (trackId);
             if (instance == nullptr || t == nullptr)
             {
@@ -287,6 +304,7 @@ void AudioEngine::addDevice (int trackId, const juce::PluginDescription& desc, s
             Device d;
             d.id = nextDeviceId++;
             d.name = instance->getName();
+            d.pluginIdentifier = pluginIdentifier;
             d.instrument = instance->getPluginDescription().isInstrument;
             d.node = seqGraph.addNode (std::move (instance));
             if (d.node == nullptr)
@@ -328,11 +346,23 @@ void AudioEngine::removeDevice (int trackId, int deviceId)
     rewire (*t);
 }
 
+void AudioEngine::setDeviceBypassed (int trackId, int deviceId, bool bypassed)
+{
+    if (auto* t = find (trackId))
+        for (auto& d : t->devices)
+            if (d.id == deviceId)
+            {
+                d.node->setBypassed (bypassed);
+                break;
+            }
+}
+
 std::vector<DeviceInfo> AudioEngine::devices (int trackId) const
 {
     std::vector<DeviceInfo> out;
     if (auto* t = find (trackId))
-        for (const auto& d : t->devices) out.push_back ({ d.id, d.name, d.instrument });
+        for (const auto& d : t->devices)
+            out.push_back ({ d.id, d.name, d.instrument, d.node->isBypassed() });
     return out;
 }
 

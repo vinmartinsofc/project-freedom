@@ -2,6 +2,7 @@ add_library(roll_core STATIC
     Scale.cpp
     Clip.cpp
     History.cpp
+    PluginFolderGrouping.cpp
     Sequencer.cpp
     Arrangement.cpp
     WindowPlacement.cpp)

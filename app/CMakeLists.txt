@@ -1,6 +1,8 @@
 juce_add_gui_app(ProjectFreedom
     PRODUCT_NAME "Project Freedom"
     COMPANY_NAME "rjc"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/app/project-freedom.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/app/project-freedom.png"
     VERSION ${PROJECT_VERSION})
 
 file(GLOB_RECURSE PROJECT_FREEDOM_ICON_FILES CONFIGURE_DEPENDS

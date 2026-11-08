@@ -6,8 +6,22 @@ public:
     Box (const DeviceInfo& d, DeviceView& o) : info (d), owner (o)
     {
         addAndMakeVisible (openButton);
+        addAndMakeVisible (bypassButton);
         addAndMakeVisible (removeButton);
         openButton.onClick = [this] { if (owner.onOpen) owner.onOpen (owner.trackId, info.id); };
+        bypassButton.setClickingTogglesState (true);
+        bypassButton.setToggleState (info.isBypassed, juce::dontSendNotification);
+        bypassButton.setButtonText (info.isBypassed ? "Bypass" : "Ativo");
+        bypassButton.setColour (juce::TextButton::buttonOnColourId, theme::accent());
+        bypassButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+        bypassButton.onClick = [this]
+        {
+            const int tid = owner.trackId, did = info.id;
+            const bool bypassed = bypassButton.getToggleState();
+            bypassButton.setButtonText (bypassed ? "Bypass" : "Ativo");
+            if (owner.onBypass)
+                owner.onBypass (tid, did, bypassed);
+        };
         removeButton.onClick = [this]
         {
             const int tid = owner.trackId, did = info.id;
@@ -15,6 +29,7 @@ public:
             juce::MessageManager::callAsync ([cb, tid, did] { if (cb) cb (tid, did); });
         };
         openButton.setMouseClickGrabsKeyboardFocus (false);
+        bypassButton.setMouseClickGrabsKeyboardFocus (false);
         removeButton.setMouseClickGrabsKeyboardFocus (false);
     }
 
@@ -38,13 +53,15 @@ public:
         auto a = getLocalBounds().reduced (8).removeFromBottom (26);
         removeButton.setBounds (a.removeFromRight (30));
         a.removeFromRight (4);
+        bypassButton.setBounds (a.removeFromRight (62));
+        a.removeFromRight (4);
         openButton.setBounds (a);
     }
 
 private:
     DeviceInfo info;
     DeviceView& owner;
-    juce::TextButton openButton { "Abrir" }, removeButton { "x" };
+    juce::TextButton openButton { "Abrir" }, bypassButton, removeButton { "x" };
 };
 
 DeviceView::DeviceView() = default;

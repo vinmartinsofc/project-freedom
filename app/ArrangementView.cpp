@@ -10,7 +10,7 @@ juce::Colour ArrangementView::colourFor (int trackId)
 
 // ============================================================ Lanes (clips)
 
-class ArrangementView::Lanes : public juce::Component
+class ArrangementView::Lanes : public juce::Component, public juce::DragAndDropTarget
 {
 public:
     Lanes (ProjectModel& p, ArrangementView& o) : project (p), owner (o) { setWantsKeyboardFocus (true); }
@@ -112,6 +112,49 @@ public:
 
         g.setColour (theme::playhead());
         g.drawVerticalLine (static_cast<int> (owner.playhead * ppb), 0.0f, static_cast<float> (getHeight()));
+
+        if (dragTrackIndex >= 0)
+        {
+            g.setColour (theme::accent().withAlpha (0.18f));
+            g.fillRect (0, dragTrackIndex * trackHeight, getWidth(), trackHeight);
+            g.setColour (theme::accent());
+            g.drawRect (0, dragTrackIndex * trackHeight, getWidth(), trackHeight, 2);
+        }
+    }
+
+    bool isInterestedInDragSource (const SourceDetails& details) override
+    {
+        const auto description = details.description.toString();
+        if (! description.startsWith ("plugin:"))
+            return false;
+
+        const auto trackIndex = trackIndexAt (details.localPosition.y);
+        if (trackIndex < 0)
+            return false;
+
+        const auto identifier = description.substring (7);
+        const auto trackId = project.tracks[static_cast<std::size_t> (trackIndex)]->id;
+        return owner.canAcceptPluginDrop == nullptr || owner.canAcceptPluginDrop (identifier, trackId);
+    }
+
+    void itemDragEnter (const SourceDetails& details) override { updateDragTarget (details); }
+    void itemDragMove (const SourceDetails& details) override  { updateDragTarget (details); }
+    void itemDragExit (const SourceDetails&) override          { dragTrackIndex = -1; repaint(); }
+
+    void itemDropped (const SourceDetails& details) override
+    {
+        const auto description = details.description.toString();
+        const auto trackIndex = trackIndexAt (details.localPosition.y);
+        dragTrackIndex = -1;
+        repaint();
+        if (! description.startsWith ("plugin:")
+            || trackIndex < 0)
+            return;
+
+        const auto trackId = project.tracks[static_cast<std::size_t> (trackIndex)]->id;
+        const auto beat = std::max (0.0, std::round (details.localPosition.x / owner.ppb));
+        if (owner.onPluginDropped)
+            owner.onPluginDropped (description.substring (7), trackId, beat);
     }
 
     // ---- mouse ----
@@ -268,12 +311,30 @@ public:
     }
 
 private:
+    int trackIndexAt (int y) const
+    {
+        if (y < 0 || y >= static_cast<int> (project.tracks.size()) * trackHeight)
+            return -1;
+        return y / trackHeight;
+    }
+
+    void updateDragTarget (const SourceDetails& details)
+    {
+        const int valid = trackIndexAt (details.localPosition.y);
+        if (dragTrackIndex != valid)
+        {
+            dragTrackIndex = valid;
+            repaint();
+        }
+    }
+
     enum class Mode { None, Move, Resize };
     ProjectModel& project;
     ArrangementView& owner;
     Mode mode = Mode::None;
     bool changed = false, copied = false;
     int curTrack = -1, curClip = -1, origTrack = -1;
+    int dragTrackIndex = -1;
     double origStart = 0.0, origLen = 4.0, downBeat = 0.0;
 };
 

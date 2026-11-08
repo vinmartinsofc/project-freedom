@@ -11,7 +11,8 @@
 #include "TransportBar.h"
 #include <map>
 
-class MainComponent : public juce::Component, private juce::ChangeListener, private juce::Timer
+class MainComponent : public juce::Component, public juce::DragAndDropContainer,
+                      private juce::ChangeListener, private juce::Timer
 {
 public:
     MainComponent();
@@ -69,8 +70,10 @@ private:
     double arrangementRatio = 0.42;
     juce::Rectangle<int> splitterRect;
     int rightTop = 0, rightHeight = 1;
-    bool draggingSplitter = false;
+    bool draggingSplitter = false, draggingBrowserSplitter = false;
     std::uint64_t lastLo = 0, lastHi = 0;
+    int browserWidth = 300;
+    juce::Rectangle<int> browserSplitterRect;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

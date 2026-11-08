@@ -16,6 +16,8 @@ public:
     std::function<void (double beats)>  onSeek;
     std::function<float (int trackId)>  meterProvider;
     std::function<juce::String (int)>   deviceSummary;
+    std::function<bool (const juce::String& pluginIdentifier, int trackId)> canAcceptPluginDrop;
+    std::function<void (const juce::String& pluginIdentifier, int trackId, double beats)> onPluginDropped;
 
     void setPlayhead (double beats);
     void setLoopEnabled (bool on);

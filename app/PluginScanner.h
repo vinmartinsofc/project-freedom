@@ -2,6 +2,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <functional>
 #include <memory>
+#include <vector>
 
 // Detecta plugins VST3 nas pastas padrão do sistema, em segundo plano, e guarda a lista
 // em disco para a próxima abertura ser instantânea. Plugins que travam o scan são
@@ -13,6 +14,7 @@ public:
     ~PluginScanner() override;
 
     juce::KnownPluginList& list() { return knownList; }
+    std::vector<juce::File> searchRoots() const;
     void startScan();
     bool isScanning() const { return isThreadRunning(); }
 

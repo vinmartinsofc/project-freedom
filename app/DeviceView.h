@@ -14,6 +14,7 @@ public:
     ~DeviceView() override;
 
     std::function<void (int trackId, int deviceId)> onOpen, onRemove;
+    std::function<void (int trackId, int deviceId, bool bypassed)> onBypass;
 
     void setDevices (int trackId, const juce::String& trackName, const std::vector<DeviceInfo>& devices);
     void paint (juce::Graphics&) override;

@@ -4,6 +4,9 @@
 #include <atomic>
 #include <functional>
 #include <map>
+#include <set>
+#include <string>
+#include <utility>
 #include <vector>
 
 // Dados do bloco atual, escritos pelo grafo e lidos pelas trilhas (mesmo thread de áudio).
@@ -122,6 +125,7 @@ struct DeviceInfo
     int  id = 0;
     juce::String name;
     bool isInstrument = false;
+    bool isBypassed = false;
 };
 
 class AudioEngine
@@ -145,11 +149,18 @@ public:
     // dispositivos (plugins) da trilha: o instrumento vem sempre primeiro, efeitos em seguida
     void addDevice (int trackId, const juce::PluginDescription&, std::function<void (const juce::String& error, int deviceId)> onDone);
     void removeDevice (int trackId, int deviceId);
+    void setDeviceBypassed (int trackId, int deviceId, bool bypassed);
     std::vector<DeviceInfo> devices (int trackId) const;
     std::unique_ptr<juce::AudioProcessorEditor> createDeviceEditor (int trackId, int deviceId);
 
 private:
-    struct Device { int id; juce::AudioProcessorGraph::Node::Ptr node; juce::String name; bool instrument; };
+    struct Device
+    {
+        int id;
+        juce::AudioProcessorGraph::Node::Ptr node;
+        juce::String name, pluginIdentifier;
+        bool instrument;
+    };
     struct TrackNodes
     {
         juce::AudioProcessorGraph::Node::Ptr source, mixer;
@@ -169,5 +180,6 @@ private:
     juce::AudioProcessorPlayer player;
     juce::AudioProcessorGraph::Node::Ptr outputNode;
     std::map<int, TrackNodes> tracks;
+    std::set<std::pair<int, std::string>> pendingPluginLoads;
     int nextDeviceId = 1;
 };

@@ -1,5 +1,32 @@
 #include "MainComponent.h"
 #include "WindowPlacement.h"
+#include <algorithm>
+#include <utility>
+
+namespace
+{
+class PluginEditorFrame : public juce::Component
+{
+public:
+    PluginEditorFrame (std::unique_ptr<juce::AudioProcessorEditor> component, int width, int height)
+        : editor (std::move (component)), editorWidth (editor->getWidth()), editorHeight (editor->getHeight())
+    {
+        addAndMakeVisible (*editor);
+        setSize (std::max (width, editorWidth), std::max (height, editorHeight));
+    }
+
+    void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xff202224)); }
+
+    void resized() override
+    {
+        editor->setBounds (getLocalBounds().withSizeKeepingCentre (editorWidth, editorHeight));
+    }
+
+private:
+    std::unique_ptr<juce::AudioProcessorEditor> editor;
+    const int editorWidth, editorHeight;
+};
+}
 
 // Janela de plugin: mantém o editor visível e oferece rolagem como fallback.
 class MainComponent::PluginWindow : public juce::DocumentWindow
@@ -36,7 +63,10 @@ public:
         }
         else
         {
-            setContentOwned (editor.release(), true);
+            if (editor->getWidth() < 240 || editor->getHeight() < 180)
+                setContentOwned (new PluginEditorFrame (std::move (editor), 280, 200), true);
+            else
+                setContentOwned (editor.release(), true);
         }
 
         const roll::Rect bounds = roll::WindowPlacement::placePluginWindow (
@@ -183,6 +213,18 @@ MainComponent::MainComponent()
     };
     arrangement.meterProvider = [this] (int id) { return engine.peak (id); };
     arrangement.deviceSummary = [this] (int id) { return deviceSummary (id); };
+    arrangement.canAcceptPluginDrop = [this] (const juce::String& identifier, int)
+    {
+        return scanner.list().getTypeForFile (identifier) != nullptr;
+    };
+    arrangement.onPluginDropped = [this] (const juce::String& identifier, int trackId, double)
+    {
+        if (auto description = scanner.list().getTypeForFile (identifier))
+        {
+            project.selectTrack (trackId);
+            loadDevice (*description);
+        }
+    };
 
     transport.onPosition = [this] (double beats)
     {
@@ -192,6 +234,10 @@ MainComponent::MainComponent()
     transport.onLoopToggled = [this] (bool on) { arrangement.setLoopEnabled (on); };
 
     deviceView.onOpen = [this] (int trackId, int deviceId) { openDeviceEditor (trackId, deviceId); };
+    deviceView.onBypass = [this] (int trackId, int deviceId, bool bypassed)
+    {
+        engine.setDeviceBypassed (trackId, deviceId, bypassed);
+    };
     deviceView.onRemove = [this] (int trackId, int deviceId)
     {
         windows.erase (deviceId);
@@ -243,9 +289,21 @@ void MainComponent::resized()
 {
     auto area = getLocalBounds();
     transport.setBounds (area.removeFromTop (44));
-    browser.setBounds (area.removeFromLeft (250));
 
     auto right = area.reduced (8);
+    if (browser.isVisible())
+    {
+        const int maxBrowserWidth = std::max (200, std::min (460, right.getWidth() - 760));
+        browserWidth = std::clamp (browserWidth, 200, maxBrowserWidth);
+        browser.setBounds (right.removeFromRight (browserWidth));
+        browserSplitterRect = right.removeFromRight (8);
+    }
+    else
+    {
+        browser.setBounds ({});
+        browserSplitterRect = {};
+    }
+
     rightTop = right.getY();
     rightHeight = std::max (1, right.getHeight());
 
@@ -306,21 +364,34 @@ void MainComponent::resized()
 
 void MainComponent::mouseDown (const juce::MouseEvent& e)
 {
+    draggingBrowserSplitter = browserSplitterRect.expanded (4, 0).contains (e.getPosition());
     draggingSplitter = splitterRect.expanded (0, 4).contains (e.getPosition());
     grabKeyboardFocus();
 }
 
 void MainComponent::mouseDrag (const juce::MouseEvent& e)
 {
-    if (! draggingSplitter) return;
-    arrangementRatio = std::clamp (static_cast<double> (e.y - rightTop) / rightHeight, 0.15, 0.75);
-    resized();
+    if (draggingBrowserSplitter)
+    {
+        const int maxBrowserWidth = std::max (200, std::min (460, getWidth() - 776));
+        browserWidth = std::clamp (getWidth() - 8 - e.x, 200, maxBrowserWidth);
+        resized();
+    }
+    else if (draggingSplitter)
+    {
+        arrangementRatio = std::clamp (static_cast<double> (e.y - rightTop) / rightHeight, 0.15, 0.75);
+        resized();
+    }
 }
 
 void MainComponent::mouseMove (const juce::MouseEvent& e)
 {
-    setMouseCursor (splitterRect.expanded (0, 4).contains (e.getPosition()) ? juce::MouseCursor::UpDownResizeCursor
-                                                                             : juce::MouseCursor::NormalCursor);
+    if (browserSplitterRect.expanded (4, 0).contains (e.getPosition()))
+        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+    else if (splitterRect.expanded (0, 4).contains (e.getPosition()))
+        setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+    else
+        setMouseCursor (juce::MouseCursor::NormalCursor);
 }
 
 void MainComponent::showDetail (bool devices)
@@ -337,6 +408,13 @@ void MainComponent::showDetail (bool devices)
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
+    if (k.getModifiers().isCtrlDown()
+        && juce::CharacterFunctions::toLowerCase (k.getKeyCode()) == 'b')
+    {
+        browser.setVisible (! browser.isVisible());
+        resized();
+        return true;
+    }
     if (k == juce::KeyPress::spaceKey) { transport.togglePlay(); return true; }
     if (k == juce::KeyPress::homeKey)  { transport.rewind(); return true; }
     if (k == juce::KeyPress (juce::KeyPress::F12Key) || k == juce::KeyPress (juce::KeyPress::tabKey, juce::ModifierKeys::shiftModifier, 0))

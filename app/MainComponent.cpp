@@ -1,17 +1,51 @@
 #include "MainComponent.h"
+#include "WindowPlacement.h"
 
-// Janela de um plugin: minimizar + fechar (o tamanho do editor é do plugin).
+// Janela de plugin: mantém o editor visível e oferece rolagem como fallback.
 class MainComponent::PluginWindow : public juce::DocumentWindow
 {
 public:
-    PluginWindow (const juce::String& name, std::unique_ptr<juce::AudioProcessorEditor> editor, std::function<void()> onClose)
+    PluginWindow (const juce::String& name,
+                  std::unique_ptr<juce::AudioProcessorEditor> editor,
+                  std::function<void()> onClose,
+                  const juce::Rectangle<int>& displayUserArea,
+                  int cascadeIndex)
         : DocumentWindow (name, juce::Colours::darkgrey, DocumentWindow::minimiseButton | DocumentWindow::closeButton),
           closeCallback (std::move (onClose))
     {
         setUsingNativeTitleBar (true);
-        setContentOwned (editor.release(), true);
         setResizable (false, false);
-        centreWithSize (getWidth(), getHeight());
+        const int horizontalMargin = std::min (16, std::max (0, (displayUserArea.getWidth() - 1) / 2));
+        const int verticalMargin = std::min (60, std::max (0, (displayUserArea.getHeight() - 1) / 2));
+        const auto available = displayUserArea.reduced (horizontalMargin, verticalMargin);
+        const auto scale = std::min ({ 1.0f,
+                                       static_cast<float> (available.getWidth()) / std::max (1, editor->getWidth()),
+                                       static_cast<float> (available.getHeight()) / std::max (1, editor->getHeight()) });
+
+        if (scale >= 0.6f && scale < 1.0f)
+            editor->setScaleFactor (scale);
+
+        const bool needsViewport = editor->getWidth() > available.getWidth()
+                                || editor->getHeight() > available.getHeight();
+        if (needsViewport)
+        {
+            auto viewport = std::make_unique<juce::Viewport>();
+            viewport->setScrollBarsShown (true, true);
+            viewport->setSize (std::min (editor->getWidth(), available.getWidth()),
+                               std::min (editor->getHeight(), available.getHeight()));
+            viewport->setViewedComponent (editor.release(), true);
+            setContentOwned (viewport.release(), true);
+        }
+        else
+        {
+            setContentOwned (editor.release(), true);
+        }
+
+        const roll::Rect bounds = roll::WindowPlacement::placePluginWindow (
+            { 0, 0, getWidth(), getHeight() },
+            { displayUserArea.getX(), displayUserArea.getY(), displayUserArea.getWidth(), displayUserArea.getHeight() },
+            cascadeIndex);
+        setBounds (bounds.x, bounds.y, bounds.width, bounds.height);
         setVisible (true);
     }
     void closeButtonPressed() override { closeCallback(); }
@@ -466,10 +500,17 @@ void MainComponent::openDeviceEditor (int trackId, int deviceId)
         for (const auto& d : engine.devices (trackId)) if (d.id == deviceId) title = d.name;
         if (auto* t = project.track (trackId)) title += "  -  " + juce::String (t->name);
 
+        const auto& displays = juce::Desktop::getInstance().getDisplays();
+        const auto* display = displays.getDisplayForRect (getScreenBounds());
+        if (display == nullptr)
+            display = displays.getPrimaryDisplay();
+
+        const auto displayArea = display != nullptr ? display->userBounds.toNearestInt()
+                                                    : juce::Rectangle<int> (0, 0, 1280, 720);
         windows[deviceId] = std::make_unique<PluginWindow> (title, std::move (ed), [this, deviceId]
         {
             juce::MessageManager::callAsync ([this, deviceId] { windows.erase (deviceId); });
-        });
+        }, displayArea, nextPluginCascadeIndex++);
     }
 }
 

@@ -63,6 +63,7 @@ private:
     std::vector<juce::Component*> clipControls;
 
     std::map<int, std::unique_ptr<PluginWindow>> windows;
+    int nextPluginCascadeIndex = 0;
 
     bool showingDevices = false;
     double arrangementRatio = 0.42;

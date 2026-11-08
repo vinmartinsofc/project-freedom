@@ -456,7 +456,7 @@ Executar **SPEC §14**: Marco 5 (desfazer global), **Marco 6** (MIDI de hardware
 
 ### 7.2 Tarefas (detalhes no SPEC, trilha V)
 - **V1 Carregador (`Icons.h/.cpp`)**: `juce_add_binary_data` a partir de `assets/icons/**.svg` (copiar o conteúdo do zip para `assets/icons/{transport,editing,mixer}`); cache por (ícone, cor, tamanho); fallback "?" visível; teste de fumaça que carrega os 24.
-- **V2 Paleta oficial no `Theme.h`** (SPEC §19.1) — **assumido**: verde `#55C982` substitui o verde-água em tudo que é "ligado/ativo"; vermelho **só** gravação; amarelo **só** alerta. (**Confirmar com o dono** — pergunta já feita.)
+- **V2 Paleta oficial no `Theme.h`** (SPEC §19.1): azul `#66A3FF` substitui o verde-água em tudo que é "ligado/ativo"; vermelho **só** gravação; amarelo **só** alerta. (Azul escolhido pelo dono.)
 - **V3 Botões com ícones + estados** (SPEC §19.2): normal/hover/pressed/disabled/ativo; área clicável ≥ 36 px; **tooltip + rótulo** (não depender só de cor).
 - **V5 Logo/ícone do app:** pedir ao dono o monograma vetorial/PNG transparente + versão clara + `.ico`.
 
@@ -527,7 +527,7 @@ Solo · armar gravação (arm) · adicionar trilha · apagar (lixeira) · renome
 
 ## 11. Perguntas pendentes ao dono (não bloqueiam; seguir os padrões)
 1. ~~Imagens de referência~~ — **recebidas** (seção 13). Falta apenas confirmar no Live: o que faz **"Set 1.1.1 Here"** e como alternar o **Pitch Lock** do modo desenho.
-2. **Verde `#55C982`** substitui o verde-água em tudo que é "ligado"? (padrão: sim)
+2. **Azul `#66A3FF`** substitui o verde-água em tudo que é "ligado". (confirmado pelo dono)
 3. **DEC-1:** áudio solto numa trilha MIDI → **bloquear** (padrão) ou converter?
 4. Atalhos que ele usa no Live para: **adicionar locator**, **mostrar/ocultar a vista de detalhe**, **borracha** — para conferir no Live dele.
 5. "Arrastar partes do DAW" inclui **janelas destacáveis/flutuantes**? (padrão: não)

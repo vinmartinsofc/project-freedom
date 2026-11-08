@@ -498,7 +498,7 @@ Dentro de qualquer função chamada pelo thread de áudio (`processBlock`, `Sequ
   - **Aceite:** todos os 24 ícones renderizam nítidos em 16, 18, 24 e 32 px (em tela com escala 100% e 150%); trocar a cor muda o ícone; teste de fumaça que carrega todos os ids.
 - [ ] **V2 — Paleta oficial em `Theme.h`** (valores em §19.1)
   - Substituir as cores provisórias; manter **funções por papel** (`background()`, `panel()`, `control()`, `iconPrimary()`, `textSecondary()`, `active()`, `record()`, `warning()`...), nunca cores soltas pela UI.
-  - Ajustar o que hoje usa o acento verde-água (botões ligados, notas, brace de loop, anel de foco) para **verde `#55C982`** (ativo) — e **vermelho** só para gravação, **amarelo** só para alerta.
+  - Ajustar o que hoje usa o acento verde-água (botões ligados, notas, brace de loop, anel de foco) para **azul `#66A3FF`** (ativo) — e **vermelho** só para gravação, **amarelo** só para alerta.
   - **Aceite:** nenhum literal `0xff......` fora de `Theme.h` (exceto cores de trilha geradas por HSV); captura de tela comparada com a paleta.
 - [ ] **V3 — Substituir os botões desenhados à mão** (`IconButton` do transporte: play/pause/stop/rewind) e os textos "M", "S", "x", "+ Trilha MIDI" etc. por ícones **mantendo tooltip e rótulo acessível** (não depender só de cor — regra do design).
   - Estados obrigatórios: normal, hover, pressed, disabled, **ativo/ligado** (cor + forma/fundo, nunca só cor). Valores em §19.2.
@@ -729,7 +729,7 @@ rolldaw/                      (raiz do repositório; renomear para project-freed
 | Botões/controles | Grafite escuro | `#242628` | — | — |
 | Ícones principais | Cinza-claro | `#E6E6E6` | 9,7:1 | 11,4:1 |
 | Texto secundário | Cinza médio | `#A5A7A8` | 5,0:1 | 5,9:1 |
-| Reprodução/ativo | Verde | `#55C982` | 5,8:1 | 6,8:1 |
+| Reprodução/ativo | Azul | `#66A3FF` | 4,8:1 | 5,6:1 |
 | Gravação | Vermelho | `#E85B5B` | **3,5:1** | 4,1:1 |
 | Alertas | Amarelo | `#F2BD50` | 7,0:1 | 8,2:1 |
 
@@ -743,7 +743,7 @@ Observações de acessibilidade: o **vermelho** passa no mínimo de 3:1 para **�
 | Hover | `#FFFFFF` | `#2C2E31` (um passo mais claro) |
 | Pressed | `#E6E6E6` | `#1D1F21` (um passo mais escuro) |
 | Disabled | `#A5A7A8` a ~40% de opacidade | `#242628` |
-| Ligado/ativo | `#55C982` **+** fundo/contorno distinto | `#242628` com borda `#55C982` |
+| Ligado/ativo | `#66A3FF` **+** fundo/contorno distinto | `#242628` com borda `#66A3FF` |
 | Gravando | `#E85B5B` **+** forma preenchida | `#242628` |
 
 ### 19.3 Biblioteca entregue (24 ícones, viewBox 24×24, traço 1,8, `currentColor`)

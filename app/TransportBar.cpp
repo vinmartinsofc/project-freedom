@@ -1,44 +1,41 @@
 #include "TransportBar.h"
 #include <cmath>
 
+void IconButton::setIcon (icons::Icon i)
+{
+    if (icon == i)
+        return;
+
+    icon = i;
+    const auto name = icon == icons::Icon::Pause ? "Pausar" : "Reproduzir";
+    setName (name);
+    setTooltip (name);
+    repaint();
+}
+
 void IconButton::paintButton (juce::Graphics& g, bool over, bool down)
 {
     auto r = getLocalBounds().toFloat().reduced (1.0f);
-    const bool active = (icon == Icon::Pause);        // "pause" aparece enquanto toca
-    g.setColour (active ? theme::accent().withAlpha (0.85f)
-                        : (down ? theme::panelLight().brighter (0.2f) : over ? theme::panelLight().brighter (0.1f) : theme::panelLight()));
+    const bool active = (icon == icons::Icon::Pause);
+    g.setColour (down ? theme::pressed() : over ? theme::hover() : theme::control());
     g.fillRoundedRectangle (r, 4.0f);
 
-    auto c = r.reduced (r.getWidth() * 0.3f, r.getHeight() * 0.28f);
-    g.setColour (active ? juce::Colours::black : theme::text());
-    switch (icon)
+    if (active)
     {
-        case Icon::Play:
-        {
-            juce::Path p;
-            p.addTriangle (c.getX(), c.getY(), c.getX(), c.getBottom(), c.getRight(), c.getCentreY());
-            g.fillPath (p);
-            break;
-        }
-        case Icon::Pause:
-        {
-            const float w = c.getWidth() * 0.34f;
-            g.fillRect (c.getX(), c.getY(), w, c.getHeight());
-            g.fillRect (c.getRight() - w, c.getY(), w, c.getHeight());
-            break;
-        }
-        case Icon::Stop:
-            g.fillRect (c);
-            break;
-        case Icon::Rewind:
-        {
-            const float w = c.getWidth() * 0.22f;
-            g.fillRect (c.getX(), c.getY(), w, c.getHeight());
-            juce::Path p;
-            p.addTriangle (c.getRight(), c.getY(), c.getRight(), c.getBottom(), c.getX() + w + 1.0f, c.getCentreY());
-            g.fillPath (p);
-            break;
-        }
+        g.setColour (theme::accent());
+        g.drawRoundedRectangle (r, 4.0f, 1.0f);
+    }
+
+    const auto iconColour = ! isEnabled() ? theme::textDim().withAlpha (0.4f)
+                                         : active ? theme::accent()
+                                                  : over ? juce::Colours::white : theme::text();
+    if (const auto* drawable = icons::get (icon, iconColour, 24))
+        drawable->drawWithin (g, r.reduced (8.0f, 6.0f), juce::RectanglePlacement::centred, 1.0f);
+    else
+    {
+        g.setColour (iconColour);
+        g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
+        g.drawText ("?", r, juce::Justification::centred);
     }
 }
 
@@ -57,6 +54,7 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
 
     playButton.onClick = [this] { togglePlay(); };
     stopButton.onClick = [this] { stop(); };
+    loopButton.setTooltip ("Ativar ou desativar o loop");
 
     loopButton.setClickingTogglesState (true);
     loopButton.setToggleState (graph.isLoop(), juce::dontSendNotification);
@@ -66,7 +64,7 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
 
     bpmLabel.setEditable (false, true, false);
     bpmLabel.setJustificationType (juce::Justification::centred);
-    bpmLabel.setColour (juce::Label::backgroundColourId, theme::panelLight());
+    bpmLabel.setColour (juce::Label::backgroundColourId, theme::control());
     bpmLabel.setColour (juce::Label::textColourId, theme::text());
     bpmLabel.setText (juce::String (graph.getBpm(), 2), juce::dontSendNotification);
     bpmLabel.onTextChange = [this]
@@ -80,7 +78,7 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     bpmCaption.setFont (juce::FontOptions (11.0f));
 
     positionLabel.setJustificationType (juce::Justification::centred);
-    positionLabel.setColour (juce::Label::backgroundColourId, theme::panelLight());
+    positionLabel.setColour (juce::Label::backgroundColourId, theme::control());
     positionLabel.setColour (juce::Label::textColourId, theme::text());
     positionLabel.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 15.0f, juce::Font::plain));
 
@@ -105,7 +103,7 @@ void TransportBar::stop()
 
 void TransportBar::updateButtons()
 {
-    playButton.setIcon (graph.isPlaying() ? IconButton::Icon::Pause : IconButton::Icon::Play);
+    playButton.setIcon (graph.isPlaying() ? icons::Icon::Pause : icons::Icon::Play);
 }
 
 void TransportBar::timerCallback()
@@ -132,7 +130,7 @@ void TransportBar::paint (juce::Graphics& g)
 
 void TransportBar::resized()
 {
-    auto area = getLocalBounds().reduced (8, 6);
+    auto area = getLocalBounds().reduced (8, 4);
     bpmCaption.setBounds (area.removeFromLeft (34));
     bpmLabel.setBounds (area.removeFromLeft (76));
     area.removeFromLeft (16);

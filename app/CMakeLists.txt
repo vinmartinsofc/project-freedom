@@ -3,8 +3,13 @@ juce_add_gui_app(ProjectFreedom
     COMPANY_NAME "rjc"
     VERSION ${PROJECT_VERSION})
 
+file(GLOB_RECURSE PROJECT_FREEDOM_ICON_FILES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/*.svg")
+juce_add_binary_data(ProjectFreedomIcons SOURCES ${PROJECT_FREEDOM_ICON_FILES})
+
 target_sources(ProjectFreedom PRIVATE
     Main.cpp
+    Icons.cpp
     ProjectModel.cpp
     ArrangementView.cpp
     DeviceView.cpp
@@ -26,6 +31,7 @@ target_compile_definitions(ProjectFreedom PRIVATE
 target_link_libraries(ProjectFreedom
     PRIVATE
         roll_core
+        ProjectFreedomIcons
         juce::juce_data_structures
         juce::juce_audio_utils
         juce::juce_audio_devices

@@ -7,11 +7,9 @@ class MainComponent::PluginWindow : public juce::DocumentWindow
 public:
     PluginWindow (const juce::String& name,
                   std::unique_ptr<juce::AudioProcessorEditor> editor,
-                  std::function<void()> onClose,
                   const juce::Rectangle<int>& displayUserArea,
                   int cascadeIndex)
-        : DocumentWindow (name, juce::Colours::darkgrey, DocumentWindow::minimiseButton | DocumentWindow::closeButton),
-          closeCallback (std::move (onClose))
+        : DocumentWindow (name, juce::Colours::darkgrey, DocumentWindow::minimiseButton | DocumentWindow::closeButton)
     {
         setUsingNativeTitleBar (true);
         setResizable (false, false);
@@ -48,9 +46,7 @@ public:
         setBounds (bounds.x, bounds.y, bounds.width, bounds.height);
         setVisible (true);
     }
-    void closeButtonPressed() override { closeCallback(); }
-private:
-    std::function<void()> closeCallback;
+    void closeButtonPressed() override { setVisible (false); }
 };
 
 MainComponent::MainComponent()
@@ -474,8 +470,7 @@ void MainComponent::loadDevice (const juce::PluginDescription& desc)
             if (d.isInstrument) windows.erase (d.id);
 
     browser.setStatus ("Carregando " + desc.name + "...");
-    const bool instrument = desc.isInstrument;
-    engine.addDevice (trackId, desc, [this, trackId, instrument] (const juce::String& error, int deviceId)
+    engine.addDevice (trackId, desc, [this, trackId] (const juce::String& error, int deviceId)
     {
         if (error.isNotEmpty())
         {
@@ -485,14 +480,20 @@ void MainComponent::loadDevice (const juce::PluginDescription& desc)
         browser.setStatus (juce::String (scanner.list().getNumTypes()) + " plugins encontrados");
         refreshDeviceView();
         project.sendChangeMessage();
-        if (instrument) openDeviceEditor (trackId, deviceId);
+        openDeviceEditor (trackId, deviceId);
     });
 }
 
 void MainComponent::openDeviceEditor (int trackId, int deviceId)
 {
     auto it = windows.find (deviceId);
-    if (it != windows.end()) { it->second->toFront (true); return; }
+    if (it != windows.end())
+    {
+        it->second->setMinimised (false);
+        it->second->setVisible (true);
+        it->second->toFront (true);
+        return;
+    }
 
     if (auto ed = engine.createDeviceEditor (trackId, deviceId))
     {
@@ -507,10 +508,16 @@ void MainComponent::openDeviceEditor (int trackId, int deviceId)
 
         const auto displayArea = display != nullptr ? display->userBounds.toNearestInt()
                                                     : juce::Rectangle<int> (0, 0, 1280, 720);
-        windows[deviceId] = std::make_unique<PluginWindow> (title, std::move (ed), [this, deviceId]
-        {
-            juce::MessageManager::callAsync ([this, deviceId] { windows.erase (deviceId); });
-        }, displayArea, nextPluginCascadeIndex++);
+        windows[deviceId] = std::make_unique<PluginWindow> (title, std::move (ed), displayArea, nextPluginCascadeIndex++);
+        windows[deviceId]->toFront (true);
+    }
+    else
+    {
+        juce::String pluginName;
+        for (const auto& device : engine.devices (trackId))
+            if (device.id == deviceId) { pluginName = device.name; break; }
+
+        browser.setStatus ("Falha ao abrir interface de " + (pluginName.isNotEmpty() ? pluginName : "plugin") + ".");
     }
 }
 

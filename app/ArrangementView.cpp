@@ -1,4 +1,5 @@
 #include "ArrangementView.h"
+#include "Icons.h"
 #include <algorithm>
 #include <cmath>
 
@@ -386,10 +387,12 @@ public:
             b->setClickingTogglesState (true);
             b->setMouseClickGrabsKeyboardFocus (false);
         }
-        mute.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd9a441));
-        solo.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff5aa9e6));
+        solo.setColour (juce::TextButton::buttonOnColourId, theme::accent());
+        mute.setColour (juce::TextButton::buttonOnColourId, theme::accent());
         mute.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
         solo.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+        mute.setTooltip ("Silenciar trilha");
+        solo.setTooltip ("Solo da trilha");
         mute.setToggleState (t->mute, juce::dontSendNotification);
         solo.setToggleState (t->solo, juce::dontSendNotification);
         mute.onClick = [this] { if (auto* tr = project.track (trackId)) { tr->mute = mute.getToggleState(); project.notifyMixer(); } };
@@ -397,6 +400,7 @@ public:
 
         volume.setSliderStyle (juce::Slider::LinearHorizontal);
         volume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        volume.setTooltip ("Volume da trilha");
         volume.setRange (0.0, 1.5, 0.001);
         volume.setValue (t->volume, juce::dontSendNotification);
         volume.setMouseClickGrabsKeyboardFocus (false);
@@ -423,11 +427,14 @@ public:
         const juce::String summary = owner.deviceSummary ? owner.deviceSummary (trackId) : juce::String();
         g.drawText (summary.isEmpty() ? theme::ui ("sem instrumento") : summary, 14, 26, getWidth() - 30, 16, juce::Justification::centredLeft, true);
 
+        if (const auto* volumeIcon = icons::get (icons::Icon::Volume, theme::textDim(), 16))
+            volumeIcon->drawWithin (g, volumeIconBounds.toFloat(), juce::RectanglePlacement::centred, 1.0f);
+
         const float h = static_cast<float> (getHeight() - 12);
         const float level = std::min (1.0f, peak);
         g.setColour (juce::Colours::black.withAlpha (0.35f));
         g.fillRect (static_cast<float> (getWidth() - 12), 6.0f, 6.0f, h);
-        g.setColour (level > 0.9f ? juce::Colour (0xffe5484d) : theme::accent());
+        g.setColour (level > 0.9f ? theme::warning() : theme::accent());
         g.fillRect (static_cast<float> (getWidth() - 12), 6.0f + h * (1.0f - level), 6.0f, h * level);
     }
 
@@ -443,6 +450,7 @@ public:
         row.removeFromLeft (4);
         solo.setBounds (row.removeFromLeft (26));
         row.removeFromLeft (6);
+        volumeIconBounds = row.removeFromLeft (20);
         volume.setBounds (row);
     }
 
@@ -468,6 +476,7 @@ private:
     ProjectModel& project;
     ArrangementView& owner;
     int trackId;
+    juce::Rectangle<int> volumeIconBounds;
     juce::Label name;
     juce::TextButton mute { "M" }, solo { "S" };
     juce::Slider volume;

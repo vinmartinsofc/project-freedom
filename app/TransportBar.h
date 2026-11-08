@@ -1,19 +1,22 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "AudioEngine.h"
+#include "Icons.h"
 #include "Theme.h"
 #include <functional>
 
-// Botão com ícone desenhado (play, pause, stop): sem depender de fontes/emoji.
+// Botão vetorial com estados visuais e nome acessível.
 class IconButton : public juce::Button
 {
 public:
-    enum class Icon { Play, Pause, Stop, Rewind };
-    explicit IconButton (Icon i) : juce::Button ("icon"), icon (i) {}
-    void setIcon (Icon i) { icon = i; repaint(); }
+    IconButton (icons::Icon i, const juce::String& name) : juce::Button (name), icon (i)
+    {
+        setTooltip (name);
+    }
+    void setIcon (icons::Icon i);
     void paintButton (juce::Graphics&, bool over, bool down) override;
 private:
-    Icon icon;
+    icons::Icon icon;
 };
 
 // Barra de transporte: play/pause, stop, loop, BPM e posição (compasso.beat.16avo).
@@ -37,7 +40,9 @@ private:
     void updateButtons();
 
     SequencerGraph& graph;
-    IconButton playButton { IconButton::Icon::Play }, stopButton { IconButton::Icon::Stop }, rewindButton { IconButton::Icon::Rewind };
+    IconButton playButton { icons::Icon::Play, "Reproduzir" };
+    IconButton stopButton { icons::Icon::Stop, "Parar" };
+    IconButton rewindButton { icons::Icon::Rewind, "Voltar ao início" };
     juce::TextButton loopButton { "Loop" };
     juce::Label bpmLabel, positionLabel, bpmCaption { {}, "BPM" };
     double lastPosition = -1.0;

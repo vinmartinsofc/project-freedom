@@ -5,6 +5,7 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "MainComponent.h"
+#include "Theme.h"
 #include "WindowPlacement.h"
 #include <limits>
 
@@ -46,7 +47,27 @@ public:
     void initialise (const juce::String&) override
     {
         if (auto* laf = dynamic_cast<juce::LookAndFeel_V4*> (&juce::LookAndFeel::getDefaultLookAndFeel()))
+        {
             laf->setColourScheme (juce::LookAndFeel_V4::getMidnightColourScheme());
+            laf->setColour (juce::ResizableWindow::backgroundColourId, theme::background());
+            laf->setColour (juce::TextButton::buttonColourId, theme::control());
+            laf->setColour (juce::TextButton::buttonOnColourId, theme::accent());
+            laf->setColour (juce::TextButton::textColourOffId, theme::text());
+            laf->setColour (juce::TextButton::textColourOnId, theme::text());
+            laf->setColour (juce::ComboBox::backgroundColourId, theme::control());
+            laf->setColour (juce::ComboBox::textColourId, theme::text());
+            laf->setColour (juce::ComboBox::outlineColourId, theme::border());
+            laf->setColour (juce::TextEditor::backgroundColourId, theme::control());
+            laf->setColour (juce::TextEditor::textColourId, theme::text());
+            laf->setColour (juce::TextEditor::outlineColourId, theme::border());
+            laf->setColour (juce::TextEditor::focusedOutlineColourId, theme::accent());
+            laf->setColour (juce::PopupMenu::backgroundColourId, theme::panel());
+            laf->setColour (juce::PopupMenu::textColourId, theme::text());
+            laf->setColour (juce::PopupMenu::highlightedBackgroundColourId, theme::accent().withAlpha (0.25f));
+            laf->setColour (juce::PopupMenu::highlightedTextColourId, theme::text());
+            laf->setColour (juce::Slider::thumbColourId, theme::text());
+            laf->setColour (juce::Slider::trackColourId, theme::accent());
+        }
         window = std::make_unique<MainWindow> (getApplicationName());
     }
     void shutdown() override                       { window.reset(); }
@@ -57,7 +78,7 @@ private:
     {
     public:
         explicit MainWindow (const juce::String& name)
-            : DocumentWindow (name, juce::Colour (0xff1e1e1e), DocumentWindow::allButtons)
+            : DocumentWindow (name, theme::background(), DocumentWindow::allButtons)
         {
             juce::PropertiesFile::Options options;
             options.applicationName = name;

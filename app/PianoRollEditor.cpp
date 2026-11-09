@@ -422,8 +422,7 @@ void NoteGrid::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheel
     if (e.mods.isCtrlDown())                       // Ctrl + roda: zoom horizontal
     {
         const double factor = w.deltaY > 0 ? 1.15 : 1.0 / 1.15;
-        model.pixelsPerBeat = std::clamp (model.pixelsPerBeat * factor, 12.0, 320.0);
-        model.sendChangeMessage();
+        if (onZoomHorizontal) onZoomHorizontal (factor);
         return;
     }
     if (e.mods.isAltDown())                        // Alt + roda: zoom vertical
@@ -468,8 +467,8 @@ bool NoteGrid::keyPressed (const juce::KeyPress& k)
     if (! ctrl)
     {
         const auto ch = k.getTextCharacter();
-        if (ch == '+' || ch == '=') { model.pixelsPerBeat = std::min (320.0, model.pixelsPerBeat * 1.25); model.sendChangeMessage(); return true; }
-        if (ch == '-' || ch == '_') { model.pixelsPerBeat = std::max (12.0,  model.pixelsPerBeat / 1.25); model.sendChangeMessage(); return true; }
+        if (ch == '+' || ch == '=') { if (onZoomHorizontal) onZoomHorizontal (1.25);       return true; }
+        if (ch == '-' || ch == '_') { if (onZoomHorizontal) onZoomHorizontal (1.0 / 1.25); return true; }
     }
 
     // Page Up/Down: rola na vertical; Ctrl+Page Up/Down: na horizontal
@@ -583,6 +582,29 @@ void RulerBar::seek (const juce::MouseEvent& e)
     if (onSeek) onSeek (std::clamp (e.position.x / model.pixelsPerBeat, 0.0, model.clip().length()));
 }
 
+bool RulerBar::isResizeHandle (juce::Point<float> position) const
+{
+    return position.x >= getWidth() - 8.0f;
+}
+
+void RulerBar::mouseDown (const juce::MouseEvent& e)
+{
+    last = e.getEventRelativeTo (getParentComponent()).position;
+    dragging = false;
+    resizing = isResizeHandle (e.position);
+}
+
+void RulerBar::mouseMove (const juce::MouseEvent& e)
+{
+    setMouseCursor (isResizeHandle (e.position) ? juce::MouseCursor::LeftRightResizeCursor
+                                                : juce::MouseCursor::NormalCursor);
+}
+
+void RulerBar::mouseExit (const juce::MouseEvent&)
+{
+    setMouseCursor (juce::MouseCursor::NormalCursor);
+}
+
 void RulerBar::mouseDrag (const juce::MouseEvent& e)
 {
     if (! dragging && e.getDistanceFromDragStart() < 4) return;
@@ -591,13 +613,25 @@ void RulerBar::mouseDrag (const juce::MouseEvent& e)
     const auto now = e.getEventRelativeTo (getParentComponent()).position;     // posição estável durante o rolar
     const float dx = now.x - last.x, dy = now.y - last.y;
     last = now;
+    if (resizing)
+    {
+        if (onZoom) onZoom (std::exp (static_cast<double> (dx) * 0.0015));
+        return;
+    }
     if (onDrag) onDrag (dx, dy);
+}
+
+void RulerBar::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    if (e.mods.isCtrlDown() && onZoom)
+        onZoom (w.deltaY > 0 ? 1.15 : 1.0 / 1.15);
 }
 
 void RulerBar::mouseUp (const juce::MouseEvent& e)
 {
-    if (! dragging) seek (e);
+    if (! dragging && ! resizing) seek (e);
     dragging = false;
+    resizing = false;
 }
 
 // ============================================================ VelocityLane
@@ -694,10 +728,11 @@ PianoRollEditor::PianoRollEditor (RollModel& m) : model (m)
     ruler.onSeek = [this] (double b) { if (onSeek) onSeek (b); };
     ruler.onDrag = [this] (float dx, float dy)
     {
-        model.pixelsPerBeat = std::clamp (model.pixelsPerBeat * std::exp (-static_cast<double> (dy) * 0.02), 12.0, 320.0);
+        zoomHorizontal (std::exp (-static_cast<double> (dy) * 0.02));
         viewport.setViewPosition (std::max (0, viewport.getViewPositionX() - static_cast<int> (dx)), viewport.getViewPositionY());
-        model.sendChangeMessage();
     };
+    ruler.onZoom = [this] (double factor) { zoomHorizontal (factor); };
+    grid.onZoomHorizontal = [this] (double factor) { zoomHorizontal (factor); };
     grid.onFocusChange = [this] { repaint(); };
 
     grid.updateSize();
@@ -722,8 +757,17 @@ void PianoRollEditor::paint (juce::Graphics& g)
 
 void PianoRollEditor::zoomHorizontal (double factor)
 {
-    model.pixelsPerBeat = std::clamp (model.pixelsPerBeat * factor, 12.0, 320.0);
+    model.pixelsPerBeat = constrainedHorizontalZoom (model.pixelsPerBeat * factor);
     model.sendChangeMessage();
+}
+
+double PianoRollEditor::constrainedHorizontalZoom (double requested) const
+{
+    const double clipLength = std::max (0.001, model.clip().length());
+    const double viewportWidth = std::max (1, viewport.getMaximumVisibleWidth());
+    const double maximum = std::min (320.0, viewportWidth / clipLength);
+    const double minimum = std::min (12.0, maximum);
+    return std::clamp (requested, minimum, maximum);
 }
 
 void PianoRollEditor::zoomVertical (int deltaPixels)
@@ -747,6 +791,7 @@ void PianoRollEditor::resized()
     viewport.setBounds (area);
     keyHolder.setBounds (left.withHeight (viewport.getMaximumVisibleHeight()));
 
+    model.pixelsPerBeat = constrainedHorizontalZoom (model.pixelsPerBeat);
     grid.updateSize();
     syncPositions();
 
@@ -768,6 +813,7 @@ void PianoRollEditor::syncPositions()
 
 void PianoRollEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 {
+    model.pixelsPerBeat = constrainedHorizontalZoom (model.pixelsPerBeat);
     const int keepPitch = lastCenterPitch;
     const int oldHeight = grid.getHeight();
     grid.updateSize();

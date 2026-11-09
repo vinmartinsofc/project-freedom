@@ -47,9 +47,11 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     for (auto* b : std::initializer_list<juce::Component*> { &playButton, &stopButton, &rewindButton }) b->setMouseClickGrabsKeyboardFocus (false);
     loopButton.setMouseClickGrabsKeyboardFocus (false);
     browserButton.setMouseClickGrabsKeyboardFocus (false);
+    pianoRollButton.setMouseClickGrabsKeyboardFocus (false);
     rewindButton.onClick = [this] { rewind(); };
     addAndMakeVisible (loopButton);
     addAndMakeVisible (browserButton);
+    addAndMakeVisible (pianoRollButton);
     addAndMakeVisible (bpmLabel);
     addAndMakeVisible (bpmCaption);
     addAndMakeVisible (positionLabel);
@@ -73,6 +75,17 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     {
         if (onBrowserToggled)
             onBrowserToggled (browserButton.getToggleState());
+    };
+
+    pianoRollButton.setTooltip ("Mostrar ou ocultar o painel inferior do piano roll e dispositivos");
+    pianoRollButton.setClickingTogglesState (true);
+    pianoRollButton.setToggleState (true, juce::dontSendNotification);
+    pianoRollButton.setColour (juce::TextButton::buttonOnColourId, theme::accent());
+    pianoRollButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    pianoRollButton.onClick = [this]
+    {
+        if (onPianoRollToggled)
+            onPianoRollToggled (pianoRollButton.getToggleState());
     };
 
     bpmLabel.setEditable (false, true, false);
@@ -119,6 +132,11 @@ void TransportBar::setBrowserVisible (bool visible)
     browserButton.setToggleState (visible, juce::dontSendNotification);
 }
 
+void TransportBar::setPianoRollVisible (bool visible)
+{
+    pianoRollButton.setToggleState (visible, juce::dontSendNotification);
+}
+
 void TransportBar::updateButtons()
 {
     playButton.setIcon (graph.isPlaying() ? icons::Icon::Pause : icons::Icon::Play);
@@ -163,4 +181,6 @@ void TransportBar::resized()
     positionLabel.setBounds (area.removeFromLeft (120));
     area.removeFromLeft (12);
     browserButton.setBounds (area.removeFromRight (88));
+    area.removeFromRight (6);
+    pianoRollButton.setBounds (area.removeFromRight (104));
 }

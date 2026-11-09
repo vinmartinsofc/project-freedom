@@ -205,7 +205,7 @@ public:
 
         if (h.clip == nullptr)
         {
-            project.selectTrack (trackId);
+            project.selectClip (trackId, -1);
             return;
         }
 
@@ -314,6 +314,11 @@ public:
         if (k.isKeyCode (juce::KeyPress::deleteKey) || k.isKeyCode (juce::KeyPress::backspaceKey))
         {
             if (t != nullptr && t->find (project.selectedClipId) != nullptr) { project.deleteClip (t->id, project.selectedClipId); return true; }
+            if (t != nullptr)
+            {
+                project.removeTrack (t->id);
+                return true;
+            }
             return false;
         }
 
@@ -725,7 +730,8 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        project.selectTrack (trackId);
+        project.selectClip (trackId, -1);
+        owner.grabFocus();
         if (e.mods.isPopupMenu())
         {
             juce::PopupMenu m;

@@ -12,6 +12,7 @@ public:
     explicit NoteGrid (RollModel& m) : model (m) { setWantsKeyboardFocus (true); }
 
     std::function<void()> onFocusChange;
+    std::function<void (double)> onZoomHorizontal;
     void focusGained (FocusChangeType) override { if (onFocusChange) onFocusChange(); }
     void focusLost (FocusChangeType) override   { if (onFocusChange) onFocusChange(); }
 
@@ -77,15 +78,20 @@ public:
     explicit RulerBar (RollModel& m) : model (m) {}
     std::function<void (double)> onSeek;
     std::function<void (float dx, float dy)> onDrag;    // arrastar: vertical = zoom, horizontal = rolar
+    std::function<void (double)> onZoom;
     void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent& e) override { last = e.position; dragging = false; }
+    void mouseDown (const juce::MouseEvent& e) override;
+    void mouseMove (const juce::MouseEvent& e) override;
+    void mouseExit (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent& e) override;
     void mouseUp (const juce::MouseEvent& e) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 private:
     void seek (const juce::MouseEvent&);
+    bool isResizeHandle (juce::Point<float>) const;
     RollModel& model;
     juce::Point<float> last;
-    bool dragging = false;
+    bool dragging = false, resizing = false;
 };
 
 // Faixa de velocity: uma barra por nota; arraste para mudar.
@@ -143,6 +149,7 @@ private:
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void syncPositions();
+    double constrainedHorizontalZoom (double requested) const;
 
     static constexpr int keyWidth = 58, rulerHeight = 24, velocityHeight = 72;
 

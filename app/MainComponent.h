@@ -33,6 +33,7 @@ private:
     void openDeviceEditor (int trackId, int deviceId);
     void updateActionIndicator();
     void setBrowserVisible (bool);
+    void setPianoRollVisible (bool);
     void closeWindowsOfTrack (int trackId);
     void refreshDeviceView();
     void applyMixers();
@@ -75,6 +76,7 @@ private:
     juce::String scanMessage;
 
     bool showingDevices = false;
+    bool pianoRollVisible = true;
     double arrangementRatio = 0.42;
     juce::Rectangle<int> splitterRect;
     int rightTop = 0, rightHeight = 1;

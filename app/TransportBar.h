@@ -31,8 +31,10 @@ public:
     void rewind();                      // volta ao início sem mudar play/pause
     std::function<void (bool)> onLoopToggled;
     std::function<void (bool)> onBrowserToggled;
+    std::function<void (bool)> onPianoRollToggled;
     std::function<void (double beats)> onPosition;   // chamado ~30x/s com o playhead
     void setBrowserVisible (bool);
+    void setPianoRollVisible (bool);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -45,7 +47,7 @@ private:
     IconButton playButton { icons::Icon::Play, "Reproduzir" };
     IconButton stopButton { icons::Icon::Stop, "Parar" };
     IconButton rewindButton { icons::Icon::Rewind, "Voltar ao início" };
-    juce::TextButton loopButton { "Loop" }, browserButton { "Plugins" };
+    juce::TextButton loopButton { "Loop" }, browserButton { "Plugins" }, pianoRollButton { "Piano Roll" };
     juce::Label bpmLabel, positionLabel, bpmCaption { {}, "BPM" };
     double lastPosition = -1.0;
 };

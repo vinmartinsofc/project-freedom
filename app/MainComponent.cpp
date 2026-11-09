@@ -261,6 +261,7 @@ MainComponent::MainComponent()
     };
     transport.onLoopToggled = [this] (bool on) { arrangement.setLoopEnabled (on); };
     transport.onBrowserToggled = [this] (bool visible) { setBrowserVisible (visible); };
+    transport.onPianoRollToggled = [this] (bool visible) { setPianoRollVisible (visible); };
 
     deviceView.onOpen = [this] (int trackId, int deviceId) { openDeviceEditor (trackId, deviceId); };
     deviceView.onBypass = [this] (int trackId, int deviceId, bool bypassed)
@@ -349,6 +350,17 @@ void MainComponent::resized()
 
     rightTop = right.getY();
     rightHeight = std::max (1, right.getHeight());
+
+    if (! pianoRollVisible)
+    {
+        arrangement.setBounds (right);
+        splitterRect = {};
+        clipTab.setBounds ({});
+        deviceTab.setBounds ({});
+        deviceView.setBounds ({});
+        for (auto* c : clipControls) c->setBounds ({});
+        return;
+    }
 
     const int arrH = std::clamp (static_cast<int> (right.getHeight() * arrangementRatio), 130, std::max (131, right.getHeight() - 230));
     arrangement.setBounds (right.removeFromTop (arrH));
@@ -451,6 +463,13 @@ void MainComponent::setBrowserVisible (bool visible)
 {
     browser.setVisible (visible);
     transport.setBrowserVisible (visible);
+    resized();
+}
+
+void MainComponent::setPianoRollVisible (bool visible)
+{
+    pianoRollVisible = visible;
+    transport.setPianoRollVisible (visible);
     resized();
 }
 

@@ -3,6 +3,55 @@
 #include <algorithm>
 #include <utility>
 
+class MainComponent::ActionIndicator final : public juce::Component
+{
+public:
+    ActionIndicator() : spinner (progress, juce::ProgressBar::Style::circular)
+    {
+        spinner.setPercentageDisplay (false);
+        spinner.setColour (juce::ProgressBar::backgroundColourId, theme::border());
+        spinner.setColour (juce::ProgressBar::foregroundColourId, theme::accent());
+        addAndMakeVisible (spinner);
+
+        message.setColour (juce::Label::textColourId, theme::text());
+        message.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        message.setJustificationType (juce::Justification::centredLeft);
+        addAndMakeVisible (message);
+        setInterceptsMouseClicks (false, false);
+    }
+
+    void showMessage (const juce::String& text)
+    {
+        message.setText (text, juce::dontSendNotification);
+        const bool wasVisible = isVisible();
+        setVisible (true);
+        if (! wasVisible)
+            toFront (false);
+        repaint();
+    }
+
+    void hide() { setVisible (false); }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (theme::panel().withAlpha (0.97f));
+        g.fillRoundedRectangle (getLocalBounds().toFloat(), 7.0f);
+        g.setColour (theme::border());
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 7.0f, 1.0f);
+    }
+
+    void resized() override
+    {
+        spinner.setBounds (10, 10, 24, 24);
+        message.setBounds (42, 0, getWidth() - 50, getHeight());
+    }
+
+private:
+    double progress = -1.0;
+    juce::ProgressBar spinner;
+    juce::Label message;
+};
+
 // Janela de plugin: mantém o editor visível e oferece rolagem como fallback.
 class MainComponent::PluginWindow : public juce::DocumentWindow
 {
@@ -66,6 +115,8 @@ MainComponent::MainComponent()
     addAndMakeVisible (deviceView);
     addAndMakeVisible (clipTab);
     addAndMakeVisible (deviceTab);
+    actionIndicator = std::make_unique<ActionIndicator>();
+    addAndMakeVisible (*actionIndicator);
 
     clipControls = { &scaleCaption, &lengthCaption, &gridCaption, &zoomCaption, &rootBox, &modeBox, &lengthBox, &scaleButton,
                      &highlightButton, &foldButton, &foldScaleButton, &drawButton, &snapButton, &previewButton,
@@ -225,11 +276,20 @@ MainComponent::MainComponent()
     };
 
     browser.onLoadRequested = [this] (const juce::PluginDescription& d) { loadDevice (d); };
-    scanner.onProgress = [this] (const juce::String& n) { browser.setStatus ("Verificando: " + juce::File (n).getFileName()); };
+    scanner.onProgress = [this] (const juce::String& n)
+    {
+        scanningPlugins = true;
+        scanMessage = "Verificando: " + juce::File (n).getFileName();
+        browser.setStatus (scanMessage);
+        updateActionIndicator();
+    };
     scanner.onFinished = [this]
     {
+        scanningPlugins = false;
+        scanMessage.clear();
         browser.refresh();
         browser.setStatus (juce::String (scanner.list().getNumTypes()) + " plugins encontrados");
+        updateActionIndicator();
     };
 
     engine.graph().setLoopRegion (project.loopStart, project.loopEnd);
@@ -242,7 +302,10 @@ MainComponent::MainComponent()
     setSize (1360, 800);
     startTimerHz (30);
 
+    scanningPlugins = true;
+    scanMessage = "Procurando plugins...";
     browser.setStatus ("Procurando plugins...");
+    updateActionIndicator();
     scanner.startScan();
 }
 
@@ -267,6 +330,8 @@ void MainComponent::resized()
 {
     auto area = getLocalBounds();
     transport.setBounds (area.removeFromTop (44));
+    if (actionIndicator != nullptr)
+        actionIndicator->setBounds ((getWidth() - 280) / 2, 50, 280, 44);
 
     auto right = area.reduced (8);
     if (browser.isVisible())
@@ -525,9 +590,14 @@ void MainComponent::loadDevice (const juce::PluginDescription& desc)
         for (const auto& d : engine.devices (trackId))
             if (d.isInstrument) windows.erase (d.id);
 
+    const int loadToken = ++nextPluginLoadToken;
+    pendingPluginLoads.emplace (loadToken, desc.name);
+    updateActionIndicator();
     browser.setStatus ("Carregando " + desc.name + "...");
-    engine.addDevice (trackId, desc, [this, trackId] (const juce::String& error, int deviceId)
+    engine.addDevice (trackId, desc, [this, trackId, loadToken] (const juce::String& error, int deviceId)
     {
+        pendingPluginLoads.erase (loadToken);
+        updateActionIndicator();
         if (error.isNotEmpty())
         {
             browser.setStatus ("Erro: " + error);
@@ -538,6 +608,28 @@ void MainComponent::loadDevice (const juce::PluginDescription& desc)
         project.sendChangeMessage();
         openDeviceEditor (trackId, deviceId);
     });
+}
+
+void MainComponent::updateActionIndicator()
+{
+    if (actionIndicator == nullptr)
+        return;
+
+    if (! pendingPluginLoads.empty())
+    {
+        const auto text = pendingPluginLoads.size() == 1
+            ? "Carregando " + pendingPluginLoads.begin()->second + "..."
+            : "Carregando " + juce::String (static_cast<int> (pendingPluginLoads.size())) + " plugins...";
+        actionIndicator->showMessage (text);
+    }
+    else if (scanningPlugins)
+    {
+        actionIndicator->showMessage (scanMessage.isNotEmpty() ? scanMessage : "Verificando plugins...");
+    }
+    else
+    {
+        actionIndicator->hide();
+    }
 }
 
 void MainComponent::openDeviceEditor (int trackId, int deviceId)

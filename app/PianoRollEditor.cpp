@@ -124,6 +124,23 @@ void NoteGrid::paint (juce::Graphics& g)
         g.drawRect (rubberRect, 1.0f);
     }
 
+    if (drag == Drag::Resize && editBegun)
+        if (const auto* note = model.clip().find (primaryId))
+        {
+            const auto noteBounds = noteRect (*note);
+            const juce::String message = "Nota: " + juce::String (note->lengthBeats, 2) + " tempos";
+            const int x = std::clamp (static_cast<int> (noteBounds.getRight()) + 8, 4, std::max (4, getWidth() - 150));
+            const int y = std::clamp (static_cast<int> (noteBounds.getY()), 4, std::max (4, getHeight() - 26));
+            const auto hint = juce::Rectangle<int> (x, y, 146, 22);
+            g.setColour (theme::panel().withAlpha (0.96f));
+            g.fillRoundedRectangle (hint.toFloat(), 5.0f);
+            g.setColour (theme::accent());
+            g.drawRoundedRectangle (hint.toFloat(), 5.0f, 1.0f);
+            g.setColour (theme::text());
+            g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+            g.drawText (message, hint.reduced (6, 0), juce::Justification::centredLeft, true);
+        }
+
     g.setColour (theme::accent().withAlpha (0.9f));                      // marcador de inserção
     g.drawVerticalLine (static_cast<int> (beatsToX (model.insertBeat)), 0.0f, static_cast<float> (getHeight()));
 
@@ -168,6 +185,7 @@ void NoteGrid::mouseDown (const juce::MouseEvent& e)
         {
             model.selection.erase (id);
             model.sendChangeMessage();
+            updateCursor (p);
             return;
         }
         if (! model.isSelected (id))
@@ -183,6 +201,7 @@ void NoteGrid::mouseDown (const juce::MouseEvent& e)
         const auto r = noteRect (*model.clip().find (id));
         const float edge = std::min (6.0f, r.getWidth() * 0.4f);
         drag = (p.x > r.getRight() - edge) ? Drag::Resize : Drag::Move;
+        updateCursor (p);
         setPreview (model.clip().find (id)->pitch);
         model.sendChangeMessage();
         return;
@@ -203,6 +222,7 @@ void NoteGrid::mouseDown (const juce::MouseEvent& e)
         original[primaryId] = *model.clip().find (primaryId);
         downBeat = n.endBeats();
         drag = Drag::Resize;
+        updateCursor (p);
         setPreview (pitch);
         model.notify (false);
         return;
@@ -216,7 +236,62 @@ void NoteGrid::mouseDown (const juce::MouseEvent& e)
     rubberStart = p;
     rubberRect = {};
     drag = Drag::Rubber;
+    updateCursor (p);
     model.sendChangeMessage();
+}
+
+void NoteGrid::mouseMove (const juce::MouseEvent& e)
+{
+    updateCursor (e.position);
+}
+
+void NoteGrid::mouseExit (const juce::MouseEvent&)
+{
+    if (drag == Drag::None)
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+}
+
+void NoteGrid::updateCursor (juce::Point<float> position)
+{
+    if (! model.hasClip())
+    {
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        return;
+    }
+
+    if (drag == Drag::Resize)
+    {
+        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+        return;
+    }
+
+    if (drag == Drag::Move)
+    {
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        return;
+    }
+
+    if (drag == Drag::Rubber)
+    {
+        setMouseCursor (juce::MouseCursor::CrosshairCursor);
+        return;
+    }
+
+    const int id = hitNote (position);
+    if (id < 0)
+    {
+        setMouseCursor (model.drawMode ? juce::MouseCursor::CrosshairCursor
+                                       : juce::MouseCursor::NormalCursor);
+        return;
+    }
+
+    if (const auto* note = model.clip().find (id))
+    {
+        const auto bounds = noteRect (*note);
+        const float edge = std::min (6.0f, bounds.getWidth() * 0.4f);
+        setMouseCursor (position.x > bounds.getRight() - edge ? juce::MouseCursor::LeftRightResizeCursor
+                                                               : juce::MouseCursor::DraggingHandCursor);
+    }
 }
 
 void NoteGrid::mouseDrag (const juce::MouseEvent& e)
@@ -294,7 +369,7 @@ void NoteGrid::mouseDrag (const juce::MouseEvent& e)
     model.notify (false);
 }
 
-void NoteGrid::mouseUp (const juce::MouseEvent&)
+void NoteGrid::mouseUp (const juce::MouseEvent& e)
 {
     setPreview (-1);
     if (editBegun)
@@ -306,6 +381,7 @@ void NoteGrid::mouseUp (const juce::MouseEvent&)
     editBegun = false;
     rubberRect = {};
     original.clear();
+    updateCursor (e.position);
     repaint();
 }
 

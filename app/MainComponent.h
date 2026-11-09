@@ -26,10 +26,12 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
 
 private:
+    class ActionIndicator;
     class PluginWindow;
 
     void loadDevice (const juce::PluginDescription&);
     void openDeviceEditor (int trackId, int deviceId);
+    void updateActionIndicator();
     void closeWindowsOfTrack (int trackId);
     void refreshDeviceView();
     void applyMixers();
@@ -64,7 +66,12 @@ private:
     std::vector<juce::Component*> clipControls;
 
     std::map<int, std::unique_ptr<PluginWindow>> windows;
+    std::map<int, juce::String> pendingPluginLoads;
+    std::unique_ptr<ActionIndicator> actionIndicator;
     int nextPluginCascadeIndex = 0;
+    int nextPluginLoadToken = 0;
+    bool scanningPlugins = false;
+    juce::String scanMessage;
 
     bool showingDevices = false;
     double arrangementRatio = 0.42;

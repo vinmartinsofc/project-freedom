@@ -115,11 +115,32 @@ public:
 
         if (dragTrackIndex >= 0)
         {
-            g.setColour (theme::accent().withAlpha (0.18f));
-            g.fillRect (0, dragTrackIndex * trackHeight, getWidth(), trackHeight);
-            g.setColour (theme::accent());
-            g.drawRect (0, dragTrackIndex * trackHeight, getWidth(), trackHeight, 2);
+            const auto colour = dragDropAllowed ? theme::accent() : juce::Colours::red;
+            const int y = dragTrackIndex * trackHeight;
+            g.setColour (colour.withAlpha (0.18f));
+            g.fillRect (0, y, getWidth(), trackHeight);
+            g.setColour (colour);
+            g.drawRect (0, y, getWidth(), trackHeight, 2);
+
+            if (dragDropAllowed)
+            {
+                const int markerX = static_cast<int> (dragBeat * ppb);
+                g.drawVerticalLine (markerX, static_cast<float> (y), static_cast<float> (y + trackHeight));
+            }
+
+            const juce::String message = dragDropAllowed ? "Solte para adicionar plugin"
+                                                         : "Plugin indisponível nesta trilha";
+            const auto hint = juce::Rectangle<int> (8, y + 6, 220, 22);
+            g.setColour (theme::panel().withAlpha (0.95f));
+            g.fillRoundedRectangle (hint.toFloat(), 5.0f);
+            g.setColour (colour);
+            g.drawRoundedRectangle (hint.toFloat(), 5.0f, 1.0f);
+            g.setColour (theme::text());
+            g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+            g.drawText (message, hint.reduced (7, 0), juce::Justification::centredLeft, true);
         }
+
+        drawActionHint (g);
     }
 
     bool isInterestedInDragSource (const SourceDetails& details) override
@@ -130,16 +151,27 @@ public:
 
     void itemDragEnter (const SourceDetails& details) override { updateDragTarget (details); }
     void itemDragMove (const SourceDetails& details) override  { updateDragTarget (details); }
-    void itemDragExit (const SourceDetails&) override          { dragTrackIndex = -1; repaint(); }
+    void itemDragExit (const SourceDetails&) override
+    {
+        dragTrackIndex = -1;
+        dragDropAllowed = false;
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        repaint();
+    }
 
     void itemDropped (const SourceDetails& details) override
     {
         const auto description = details.description.toString();
         const auto trackIndex = trackIndexAt (details.localPosition.y);
         dragTrackIndex = -1;
+        dragDropAllowed = false;
+        setMouseCursor (juce::MouseCursor::NormalCursor);
         repaint();
         if (! description.startsWith ("plugin:")
-            || trackIndex < 0)
+            || trackIndex < 0
+            || (owner.canAcceptPluginDrop
+                && ! owner.canAcceptPluginDrop (description.substring (7),
+                                                project.tracks[static_cast<std::size_t> (trackIndex)]->id)))
             return;
 
         const auto trackId = project.tracks[static_cast<std::size_t> (trackIndex)]->id;
@@ -183,6 +215,16 @@ public:
         downBeat = e.position.x / owner.ppb;
         const float right = static_cast<float> (h.clip->end() * owner.ppb);
         mode = (e.position.x > right - 7.0f) ? Mode::Resize : Mode::Move;
+        setMouseCursor (mode == Mode::Resize ? juce::MouseCursor::LeftRightResizeCursor
+                                             : juce::MouseCursor::DraggingHandCursor);
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override { updateCursor (e.position); }
+
+    void mouseExit (const juce::MouseEvent&) override
+    {
+        if (mode == Mode::None)
+            setMouseCursor (juce::MouseCursor::NormalCursor);
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
@@ -238,9 +280,16 @@ public:
                     }
                 }
         }
+
+        repaint();
     }
 
-    void mouseUp (const juce::MouseEvent&) override { mode = Mode::None; }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        mode = Mode::None;
+        updateCursor (e.position);
+        repaint();
+    }
 
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
@@ -311,12 +360,70 @@ private:
 
     void updateDragTarget (const SourceDetails& details)
     {
-        const int valid = trackIndexAt (details.localPosition.y);
-        if (dragTrackIndex != valid)
+        const auto description = details.description.toString();
+        const int target = trackIndexAt (details.localPosition.y);
+        dragTrackIndex = target;
+        dragBeat = std::max (0.0, std::round (details.localPosition.x / owner.ppb));
+        dragDropAllowed = description.startsWith ("plugin:")
+                       && target >= 0
+                       && (! owner.canAcceptPluginDrop
+                           || owner.canAcceptPluginDrop (
+                               description.substring (7),
+                               project.tracks[static_cast<std::size_t> (target)]->id));
+        setMouseCursor (dragDropAllowed ? juce::MouseCursor::CopyingCursor
+                                        : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+
+    void updateCursor (juce::Point<float> position)
+    {
+        if (mode == Mode::Resize)
         {
-            dragTrackIndex = valid;
-            repaint();
+            setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+            return;
         }
+
+        if (mode == Mode::Move)
+        {
+            setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+            return;
+        }
+
+        const auto h = hit (position);
+        if (h.clip == nullptr)
+        {
+            setMouseCursor (juce::MouseCursor::NormalCursor);
+            return;
+        }
+
+        const float right = static_cast<float> (h.clip->end() * owner.ppb);
+        setMouseCursor (position.x > right - 7.0f ? juce::MouseCursor::LeftRightResizeCursor
+                                                   : juce::MouseCursor::DraggingHandCursor);
+    }
+
+    void drawActionHint (juce::Graphics& g)
+    {
+        if (mode == Mode::None)
+            return;
+
+        const auto* track = project.track (curTrack);
+        const auto* clip = track != nullptr ? track->find (curClip) : nullptr;
+        if (clip == nullptr)
+            return;
+
+        const juce::String message = mode == Mode::Resize
+            ? "Tamanho: " + juce::String (clip->clip.length() / 4.0, 1) + " compassos"
+            : "Movendo: compasso " + juce::String (static_cast<int> (std::floor (clip->start / 4.0)) + 1);
+        const int x = std::clamp (static_cast<int> (clip->end() * owner.ppb) + 8, 4, std::max (4, getWidth() - 194));
+        const int y = static_cast<int> (project.trackIndex (curTrack)) * trackHeight + 8;
+        const auto hint = juce::Rectangle<int> (x, y, 190, 24);
+        g.setColour (theme::panel().withAlpha (0.96f));
+        g.fillRoundedRectangle (hint.toFloat(), 5.0f);
+        g.setColour (theme::accent());
+        g.drawRoundedRectangle (hint.toFloat(), 5.0f, 1.0f);
+        g.setColour (theme::text());
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        g.drawText (message, hint.reduced (7, 0), juce::Justification::centredLeft, true);
     }
 
     enum class Mode { None, Move, Resize };
@@ -324,9 +431,10 @@ private:
     ArrangementView& owner;
     Mode mode = Mode::None;
     bool changed = false, copied = false;
+    bool dragDropAllowed = false;
     int curTrack = -1, curClip = -1, origTrack = -1;
     int dragTrackIndex = -1;
-    double origStart = 0.0, origLen = 4.0, downBeat = 0.0;
+    double origStart = 0.0, origLen = 4.0, downBeat = 0.0, dragBeat = 0.0;
 };
 
 // ============================================================ Ruler (régua + brace de loop)

@@ -20,6 +20,8 @@ public:
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
@@ -34,6 +36,7 @@ private:
     int   yToRow (float y) const     { return static_cast<int> (std::floor (y / model.rowHeight)); }
     juce::Rectangle<float> noteRect (const roll::Note&) const;
     int  hitNote (juce::Point<float>) const;
+    void updateCursor (juce::Point<float>);
     void setPreview (int pitch);
     void flashPreview (int pitch);
 

@@ -3,31 +3,6 @@
 #include <algorithm>
 #include <utility>
 
-namespace
-{
-class PluginEditorFrame : public juce::Component
-{
-public:
-    PluginEditorFrame (std::unique_ptr<juce::AudioProcessorEditor> component, int width, int height)
-        : editor (std::move (component)), editorWidth (editor->getWidth()), editorHeight (editor->getHeight())
-    {
-        addAndMakeVisible (*editor);
-        setSize (std::max (width, editorWidth), std::max (height, editorHeight));
-    }
-
-    void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xff202224)); }
-
-    void resized() override
-    {
-        editor->setBounds (getLocalBounds().withSizeKeepingCentre (editorWidth, editorHeight));
-    }
-
-private:
-    std::unique_ptr<juce::AudioProcessorEditor> editor;
-    const int editorWidth, editorHeight;
-};
-}
-
 // Janela de plugin: mantém o editor visível e oferece rolagem como fallback.
 class MainComponent::PluginWindow : public juce::DocumentWindow
 {
@@ -63,18 +38,21 @@ public:
         }
         else
         {
-            if (editor->getWidth() < 240 || editor->getHeight() < 180)
-                setContentOwned (new PluginEditorFrame (std::move (editor), 280, 200), true);
-            else
-                setContentOwned (editor.release(), true);
+            setContentOwned (editor.release(), true);
         }
 
-        const roll::Rect bounds = roll::WindowPlacement::placePluginWindow (
-            { 0, 0, getWidth(), getHeight() },
-            { displayUserArea.getX(), displayUserArea.getY(), displayUserArea.getWidth(), displayUserArea.getHeight() },
-            cascadeIndex);
+        const auto placeWindow = [this, &displayUserArea, cascadeIndex]
+        {
+            return roll::WindowPlacement::placePluginWindow (
+                { 0, 0, getWidth(), getHeight() },
+                { displayUserArea.getX(), displayUserArea.getY(), displayUserArea.getWidth(), displayUserArea.getHeight() },
+                cascadeIndex);
+        };
+        auto bounds = placeWindow();
         setBounds (bounds.x, bounds.y, bounds.width, bounds.height);
         setVisible (true);
+        bounds = placeWindow();
+        setBounds (bounds.x, bounds.y, bounds.width, bounds.height);
     }
     void closeButtonPressed() override { setVisible (false); }
 };

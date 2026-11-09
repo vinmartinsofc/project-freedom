@@ -124,17 +124,8 @@ public:
 
     bool isInterestedInDragSource (const SourceDetails& details) override
     {
-        const auto description = details.description.toString();
-        if (! description.startsWith ("plugin:"))
-            return false;
-
-        const auto trackIndex = trackIndexAt (details.localPosition.y);
-        if (trackIndex < 0)
-            return false;
-
-        const auto identifier = description.substring (7);
-        const auto trackId = project.tracks[static_cast<std::size_t> (trackIndex)]->id;
-        return owner.canAcceptPluginDrop == nullptr || owner.canAcceptPluginDrop (identifier, trackId);
+        // JUCE checks interest before converting localPosition to this target's coordinates.
+        return details.description.toString().startsWith ("plugin:");
     }
 
     void itemDragEnter (const SourceDetails& details) override { updateDragTarget (details); }

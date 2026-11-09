@@ -32,6 +32,7 @@ private:
     void loadDevice (const juce::PluginDescription&);
     void openDeviceEditor (int trackId, int deviceId);
     void updateActionIndicator();
+    void setBrowserVisible (bool);
     void closeWindowsOfTrack (int trackId);
     void refreshDeviceView();
     void applyMixers();

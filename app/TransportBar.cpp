@@ -46,8 +46,10 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     addAndMakeVisible (rewindButton);
     for (auto* b : std::initializer_list<juce::Component*> { &playButton, &stopButton, &rewindButton }) b->setMouseClickGrabsKeyboardFocus (false);
     loopButton.setMouseClickGrabsKeyboardFocus (false);
+    browserButton.setMouseClickGrabsKeyboardFocus (false);
     rewindButton.onClick = [this] { rewind(); };
     addAndMakeVisible (loopButton);
+    addAndMakeVisible (browserButton);
     addAndMakeVisible (bpmLabel);
     addAndMakeVisible (bpmCaption);
     addAndMakeVisible (positionLabel);
@@ -61,6 +63,17 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     loopButton.setColour (juce::TextButton::buttonOnColourId, theme::accent());
     loopButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
     loopButton.onClick = [this] { graph.setLoop (loopButton.getToggleState()); if (onLoopToggled) onLoopToggled (loopButton.getToggleState()); };
+
+    browserButton.setTooltip ("Mostrar ou ocultar o navegador de plugins (Ctrl+B)");
+    browserButton.setClickingTogglesState (true);
+    browserButton.setToggleState (true, juce::dontSendNotification);
+    browserButton.setColour (juce::TextButton::buttonOnColourId, theme::accent());
+    browserButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    browserButton.onClick = [this]
+    {
+        if (onBrowserToggled)
+            onBrowserToggled (browserButton.getToggleState());
+    };
 
     bpmLabel.setEditable (false, true, false);
     bpmLabel.setJustificationType (juce::Justification::centred);
@@ -99,6 +112,11 @@ void TransportBar::stop()
     graph.setPlaying (false);
     graph.rewind();
     updateButtons();
+}
+
+void TransportBar::setBrowserVisible (bool visible)
+{
+    browserButton.setToggleState (visible, juce::dontSendNotification);
 }
 
 void TransportBar::updateButtons()
@@ -143,4 +161,6 @@ void TransportBar::resized()
     loopButton.setBounds (area.removeFromLeft (56));
     area.removeFromLeft (16);
     positionLabel.setBounds (area.removeFromLeft (120));
+    area.removeFromLeft (12);
+    browserButton.setBounds (area.removeFromRight (88));
 }

@@ -452,11 +452,25 @@ public:
 
         // brace de loop
         const float lx0 = static_cast<float> (project.loopStart * ppb), lx1 = static_cast<float> (project.loopEnd * ppb);
-        g.setColour (owner.loopEnabled ? theme::accent() : theme::textDim().withAlpha (0.6f));
+        const auto braceColour = mode != Mode::Seek || hoverMode != Mode::Seek
+                               ? theme::accent().brighter (0.2f)
+                               : owner.loopEnabled ? theme::accent() : theme::textDim().withAlpha (0.6f);
+        g.setColour (braceColour);
         g.fillRect (lx0, 0.0f, lx1 - lx0, 8.0f);
         g.setColour (juce::Colours::black.withAlpha (0.4f));
         g.fillRect (lx0, 0.0f, 3.0f, 8.0f);
         g.fillRect (lx1 - 3.0f, 0.0f, 3.0f, 8.0f);
+
+        const bool leftActive = mode == Mode::LoopLeft || (mode == Mode::Seek && hoverMode == Mode::LoopLeft);
+        const bool rightActive = mode == Mode::LoopRight || (mode == Mode::Seek && hoverMode == Mode::LoopRight);
+        if (leftActive || rightActive)
+        {
+            g.setColour (juce::Colours::white);
+            if (leftActive)
+                g.fillRoundedRectangle (lx0 - 2.0f, 0.0f, 5.0f, 10.0f, 2.0f);
+            if (rightActive)
+                g.fillRoundedRectangle (lx1 - 3.0f, 0.0f, 5.0f, 10.0f, 2.0f);
+        }
 
         const int labelStep = ppb < 10.0 ? 16 : ppb < 18.0 ? 8 : 4;          // beats entre rótulos
         g.setFont (juce::FontOptions (11.0f));
@@ -478,11 +492,15 @@ public:
         const float px = static_cast<float> (owner.playhead * ppb);
         tri.addTriangle (px - 4.0f, 10.0f, px + 4.0f, 10.0f, px, 18.0f);
         g.fillPath (tri);
+
+        if (mode == Mode::LoopLeft || mode == Mode::LoopRight || mode == Mode::LoopMove)
+            drawActionHint (g);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
         mode = Mode::Seek;
+        lastMouseX = e.position.x;
         if (e.y <= 10)
         {
             const double ppb = owner.ppb;
@@ -491,11 +509,36 @@ public:
             else if (std::abs (e.position.x - lx1) < 6.0f)  mode = Mode::LoopRight;
             else if (e.position.x > lx0 && e.position.x < lx1) { mode = Mode::LoopMove; grabOffset = e.position.x / ppb - project.loopStart; }
         }
+        hoverMode = mode;
+        updateCursor (e.position);
         if (mode == Mode::Seek && owner.onSeek) owner.onSeek (std::max (0.0, e.position.x / owner.ppb));
+        repaint();
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        lastMouseX = e.position.x;
+        if (mode == Mode::Seek)
+        {
+            hoverMode = modeAt (e.position);
+            updateCursor (e.position);
+            repaint();
+        }
+    }
+
+    void mouseExit (const juce::MouseEvent&) override
+    {
+        if (mode == Mode::Seek)
+        {
+            hoverMode = Mode::Seek;
+            setMouseCursor (juce::MouseCursor::NormalCursor);
+            repaint();
+        }
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
+        lastMouseX = e.position.x;
         const double beat = std::max (0.0, std::round (e.position.x / owner.ppb));
         switch (mode)
         {
@@ -510,6 +553,15 @@ public:
                 break;
             }
         }
+        repaint();
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        mode = Mode::Seek;
+        hoverMode = modeAt (e.position);
+        updateCursor (e.position);
+        repaint();
     }
 
 private:
@@ -517,7 +569,64 @@ private:
     ProjectModel& project;
     ArrangementView& owner;
     Mode mode = Mode::Seek;
+    Mode hoverMode = Mode::Seek;
     double grabOffset = 0.0;
+    float lastMouseX = 0.0f;
+
+    Mode modeAt (juce::Point<float> position) const
+    {
+        if (position.y > 10.0f)
+            return Mode::Seek;
+
+        const float left = static_cast<float> (project.loopStart * owner.ppb);
+        const float right = static_cast<float> (project.loopEnd * owner.ppb);
+        if (std::abs (position.x - left) < 6.0f)  return Mode::LoopLeft;
+        if (std::abs (position.x - right) < 6.0f) return Mode::LoopRight;
+        if (position.x > left && position.x < right) return Mode::LoopMove;
+        return Mode::Seek;
+    }
+
+    void updateCursor (juce::Point<float> position)
+    {
+        const auto target = mode == Mode::Seek ? modeAt (position) : mode;
+        if (target == Mode::LoopLeft || target == Mode::LoopRight)
+            setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+        else if (target == Mode::LoopMove)
+            setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        else
+            setMouseCursor (juce::MouseCursor::NormalCursor);
+    }
+
+    static juce::String formatPosition (double beat)
+    {
+        const int wholeBeat = std::max (0, static_cast<int> (std::round (beat)));
+        return juce::String (wholeBeat / 4 + 1) + "."
+             + juce::String (wholeBeat % 4 + 1) + ".1";
+    }
+
+    void drawActionHint (juce::Graphics& g) const
+    {
+        juce::String message;
+        if (mode == Mode::LoopLeft)
+            message = "Início do loop: " + formatPosition (project.loopStart);
+        else if (mode == Mode::LoopRight)
+            message = "Fim do loop: " + formatPosition (project.loopEnd);
+        else
+            message = "Loop: " + formatPosition (project.loopStart) + " - "
+                    + formatPosition (project.loopEnd) + "  ("
+                    + juce::String ((project.loopEnd - project.loopStart) / 4.0, 1) + " compassos)";
+
+        const auto hint = juce::Rectangle<int> (
+            std::clamp (static_cast<int> (lastMouseX) + 12, 4, std::max (4, getWidth() - 274)),
+            2, 270, 24);
+        g.setColour (theme::panel().withAlpha (0.97f));
+        g.fillRoundedRectangle (hint.toFloat(), 5.0f);
+        g.setColour (theme::accent());
+        g.drawRoundedRectangle (hint.toFloat(), 5.0f, 1.0f);
+        g.setColour (theme::text());
+        g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+        g.drawText (message, hint.reduced (7, 0), juce::Justification::centredLeft, true);
+    }
 };
 
 // ============================================================ Header (cabeçalho de trilha)

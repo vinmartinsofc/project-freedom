@@ -254,13 +254,13 @@ MainComponent::MainComponent()
             loadDevice (*description);
         }
     };
-
     transport.onPosition = [this] (double beats)
     {
         arrangement.setPlayhead (beats);
         editor.setPlayhead (beats - model.clipStartBeats);
     };
     transport.onLoopToggled = [this] (bool on) { arrangement.setLoopEnabled (on); };
+    transport.onBrowserToggled = [this] (bool visible) { setBrowserVisible (visible); };
 
     deviceView.onOpen = [this] (int trackId, int deviceId) { openDeviceEditor (trackId, deviceId); };
     deviceView.onBypass = [this] (int trackId, int deviceId, bool bypassed)
@@ -447,6 +447,13 @@ void MainComponent::showDetail (bool devices)
     if (devices) refreshDeviceView();
 }
 
+void MainComponent::setBrowserVisible (bool visible)
+{
+    browser.setVisible (visible);
+    transport.setBrowserVisible (visible);
+    resized();
+}
+
 // ------------------------------------------------------------ teclado
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)
@@ -454,8 +461,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k.getModifiers().isCtrlDown()
         && juce::CharacterFunctions::toLowerCase (k.getKeyCode()) == 'b')
     {
-        browser.setVisible (! browser.isVisible());
-        resized();
+        setBrowserVisible (! browser.isVisible());
         return true;
     }
     if (k == juce::KeyPress::spaceKey) { transport.togglePlay(); return true; }

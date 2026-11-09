@@ -31,9 +31,11 @@ public:
     void rewind();                      // volta ao início sem mudar play/pause
     std::function<void (bool)> onLoopToggled;
     std::function<void (bool)> onBrowserToggled;
+    std::function<void (bool)> onFileBrowserToggled;
     std::function<void (bool)> onPianoRollToggled;
     std::function<void (double beats)> onPosition;   // chamado ~30x/s com o playhead
     void setBrowserVisible (bool);
+    void setFileBrowserVisible (bool);
     void setPianoRollVisible (bool);
 
     void paint (juce::Graphics&) override;
@@ -46,8 +48,9 @@ private:
     SequencerGraph& graph;
     IconButton playButton { icons::Icon::Play, "Reproduzir" };
     IconButton stopButton { icons::Icon::Stop, "Parar" };
-    IconButton rewindButton { icons::Icon::Rewind, "Voltar ao início" };
-    juce::TextButton loopButton { "Loop" }, browserButton { "Plugins" }, pianoRollButton { "Piano Roll" };
+    IconButton rewindButton { icons::Icon::Rewind, "Voltar ao inicio" };
+    juce::TextButton loopButton { "Loop" }, browserButton { "Plugins" }, fileBrowserButton { "Audio" },
+                     pianoRollButton { "Piano Roll" };
     juce::Label bpmLabel, positionLabel, bpmCaption { {}, "BPM" };
     double lastPosition = -1.0;
 };

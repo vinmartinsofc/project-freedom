@@ -11,12 +11,13 @@ class ProjectModel : public juce::ChangeBroadcaster
 {
 public:
     std::vector<std::unique_ptr<roll::Track>> tracks;
-    int selectedTrackId = -1, selectedClipId = -1;
+    int selectedTrackId = -1, selectedClipId = -1, selectedAudioClipId = -1;
     double loopStart = 0.0, loopEnd = 16.0;
     double totalBeats = 256.0;                       // 64 compassos visíveis (cresce com os clips)
 
     std::function<void (int trackId)> onTrackAdded, onTrackRemoved;   // removed: antes de apagar
     std::function<void (int trackId)> onTrackNotes;                   // notas da trilha mudaram
+    std::function<void (int trackId)> onAudioClipsChanged;
     std::function<void()> onMixerChanged;
     std::function<void()> onSelectionChanged;                         // trilha/clip selecionados mudaram
     std::function<void()> onLoopChanged;
@@ -26,15 +27,22 @@ public:
     roll::Placement* selectedClip() const;
     int  trackIndex (int id) const;
 
-    roll::Track* addTrack();
+    roll::Track* addTrack (roll::TrackType type = roll::TrackType::Midi);
     void removeTrack (int id);
     void selectTrack (int id);
     void selectClip (int trackId, int clipId);
 
     roll::Placement* addClip (int trackId, double start, double length);
     void deleteClip (int trackId, int clipId);
+    roll::AudioPlacement* addAudioClip (int trackId, double start, double length,
+                                        const std::string& filePath, const std::string& name,
+                                        const std::vector<float>& waveform);
+    void deleteAudioClip (int trackId, int clipId);
+    bool resizeAudioClip (int trackId, int clipId, double length);
     // move para outra trilha/posição; devolve o novo id do clip (ou -1 se não coube)
     int  moveClip (int fromTrack, int clipId, int toTrack, double newStart);
+    int  moveAudioClip (int fromTrack, int clipId, int toTrack, double newStart);
+    void selectAudioClip (int trackId, int clipId);
     void notifyTrackNotes (int trackId);
     void notifyMixer()   { if (onMixerChanged) onMixerChanged(); sendChangeMessage(); }
     void setLoop (double s, double e);

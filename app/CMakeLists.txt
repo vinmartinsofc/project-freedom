@@ -16,6 +16,7 @@ target_sources(ProjectFreedom PRIVATE
     ArrangementView.cpp
     DeviceView.cpp
     AudioEngine.cpp
+    AudioFileBrowser.cpp
     PluginScanner.cpp
     BrowserPanel.cpp
     TransportBar.cpp

@@ -50,6 +50,62 @@ bool Track::isFree (double start, double length, int ignoreId) const
     return true;
 }
 
+AudioPlacement* Track::addAudioClip (double start, double length, std::string filePath,
+                                     std::string name, std::vector<float> waveform)
+{
+    auto clip = std::make_unique<AudioPlacement>();
+    clip->id = nextId++;
+    clip->start = start;
+    clip->lengthBeats = length;
+    clip->filePath = std::move (filePath);
+    clip->name = std::move (name);
+    clip->waveform = std::move (waveform);
+    audioClips.push_back (std::move (clip));
+    return audioClips.back().get();
+}
+
+AudioPlacement* Track::findAudioClip (int clipId) const
+{
+    for (const auto& clip : audioClips)
+        if (clip->id == clipId)
+            return clip.get();
+    return nullptr;
+}
+
+std::unique_ptr<AudioPlacement> Track::takeAudioClip (int clipId)
+{
+    for (auto it = audioClips.begin(); it != audioClips.end(); ++it)
+        if ((*it)->id == clipId)
+        {
+            auto clip = std::move (*it);
+            audioClips.erase (it);
+            return clip;
+        }
+    return nullptr;
+}
+
+void Track::putAudioClip (std::unique_ptr<AudioPlacement> clip)
+{
+    clip->id = nextId++;
+    audioClips.push_back (std::move (clip));
+}
+
+bool Track::removeAudioClip (int clipId)
+{
+    return takeAudioClip (clipId) != nullptr;
+}
+
+bool Track::isAudioFree (double start, double length, int ignoreId) const
+{
+    constexpr double eps = 1.0e-9;
+    for (const auto& clip : audioClips)
+    {
+        if (clip->id == ignoreId) continue;
+        if (start < clip->end() - eps && start + length > clip->start + eps) return false;
+    }
+    return true;
+}
+
 std::vector<Note> flatten (const Track& track)
 {
     std::vector<Note> out;

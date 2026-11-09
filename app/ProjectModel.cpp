@@ -20,11 +20,12 @@ roll::Placement* ProjectModel::selectedClip() const
     return t != nullptr ? t->find (selectedClipId) : nullptr;
 }
 
-roll::Track* ProjectModel::addTrack()
+roll::Track* ProjectModel::addTrack (roll::TrackType type)
 {
     auto t = std::make_unique<roll::Track>();
     t->id = nextTrackId++;
-    t->name = std::to_string (t->id) + " MIDI";
+    t->type = type;
+    t->name = std::to_string (t->id) + (type == roll::TrackType::Audio ? " AUDIO" : " MIDI");
     auto* raw = t.get();
     tracks.push_back (std::move (t));
     if (onTrackAdded) onTrackAdded (raw->id);
@@ -42,6 +43,7 @@ void ProjectModel::removeTrack (int id)
     if (selectedTrackId == id)
     {
         selectedClipId = -1;
+        selectedAudioClipId = -1;
         if (onSelectionChanged) onSelectionChanged();     // o piano roll solta o clip antes dele ser apagado
     }
     if (onTrackRemoved) onTrackRemoved (id);
@@ -57,7 +59,11 @@ void ProjectModel::removeTrack (int id)
 void ProjectModel::selectTrack (int id)
 {
     if (track (id) == nullptr) return;
-    if (selectedTrackId != id) selectedClipId = -1;
+    if (selectedTrackId != id)
+    {
+        selectedClipId = -1;
+        selectedAudioClipId = -1;
+    }
     selectedTrackId = id;
     if (onSelectionChanged) onSelectionChanged();
     sendChangeMessage();
@@ -68,6 +74,18 @@ void ProjectModel::selectClip (int trackId, int clipId)
     if (track (trackId) == nullptr) return;
     selectedTrackId = trackId;
     selectedClipId = clipId;
+    selectedAudioClipId = -1;
+    if (onSelectionChanged) onSelectionChanged();
+    sendChangeMessage();
+}
+
+void ProjectModel::selectAudioClip (int trackId, int clipId)
+{
+    auto* t = track (trackId);
+    if (t == nullptr || t->findAudioClip (clipId) == nullptr) return;
+    selectedTrackId = trackId;
+    selectedClipId = -1;
+    selectedAudioClipId = clipId;
     if (onSelectionChanged) onSelectionChanged();
     sendChangeMessage();
 }
@@ -75,12 +93,28 @@ void ProjectModel::selectClip (int trackId, int clipId)
 roll::Placement* ProjectModel::addClip (int trackId, double start, double length)
 {
     auto* t = track (trackId);
-    if (t == nullptr || ! t->isFree (start, length)) return nullptr;
+    if (t == nullptr || t->type != roll::TrackType::Midi || ! t->isFree (start, length)) return nullptr;
     auto* p = t->addClip (start, length);
     growTo (p->end() + 64.0);
     selectClip (trackId, p->id);
     notifyTrackNotes (trackId);
     return p;
+}
+
+roll::AudioPlacement* ProjectModel::addAudioClip (int trackId, double start, double length,
+                                                   const std::string& filePath, const std::string& name,
+                                                   const std::vector<float>& waveform)
+{
+    auto* t = track (trackId);
+    if (t == nullptr || t->type != roll::TrackType::Audio || start < 0.0 || length <= 0.0
+        || filePath.empty() || ! t->isAudioFree (start, length))
+        return nullptr;
+
+    auto* clip = t->addAudioClip (start, length, filePath, name, waveform);
+    growTo (clip->end() + 64.0);
+    selectAudioClip (trackId, clip->id);
+    if (onAudioClipsChanged) onAudioClipsChanged (trackId);
+    return clip;
 }
 
 void ProjectModel::deleteClip (int trackId, int clipId)
@@ -98,11 +132,40 @@ void ProjectModel::deleteClip (int trackId, int clipId)
     sendChangeMessage();
 }
 
+void ProjectModel::deleteAudioClip (int trackId, int clipId)
+{
+    auto* t = track (trackId);
+    if (t == nullptr || t->findAudioClip (clipId) == nullptr) return;
+    if (selectedTrackId == trackId && selectedAudioClipId == clipId)
+    {
+        selectedAudioClipId = -1;
+        if (onSelectionChanged) onSelectionChanged();
+    }
+    t->removeAudioClip (clipId);
+    if (onAudioClipsChanged) onAudioClipsChanged (trackId);
+    sendChangeMessage();
+}
+
+bool ProjectModel::resizeAudioClip (int trackId, int clipId, double length)
+{
+    auto* t = track (trackId);
+    auto* clip = t != nullptr ? t->findAudioClip (clipId) : nullptr;
+    if (t == nullptr || t->type != roll::TrackType::Audio || clip == nullptr || length <= 0.0
+        || ! t->isAudioFree (clip->start, length, clipId))
+        return false;
+    clip->lengthBeats = length;
+    growTo (clip->end() + 64.0);
+    if (onAudioClipsChanged) onAudioClipsChanged (trackId);
+    sendChangeMessage();
+    return true;
+}
+
 int ProjectModel::moveClip (int fromTrack, int clipId, int toTrack, double newStart)
 {
     auto* src = track (fromTrack);
     auto* dst = track (toTrack);
-    if (src == nullptr || dst == nullptr) return -1;
+    if (src == nullptr || dst == nullptr
+        || src->type != roll::TrackType::Midi || dst->type != roll::TrackType::Midi) return -1;
     auto* p = src->find (clipId);
     if (p == nullptr) return -1;
 
@@ -134,6 +197,42 @@ int ProjectModel::moveClip (int fromTrack, int clipId, int toTrack, double newSt
     notifyTrackNotes (fromTrack);
     notifyTrackNotes (toTrack);
     if (onSelectionChanged) onSelectionChanged();
+    sendChangeMessage();
+    return newId;
+}
+
+int ProjectModel::moveAudioClip (int fromTrack, int clipId, int toTrack, double newStart)
+{
+    auto* src = track (fromTrack);
+    auto* dst = track (toTrack);
+    if (src == nullptr || dst == nullptr
+        || src->type != roll::TrackType::Audio || dst->type != roll::TrackType::Audio)
+        return -1;
+    auto* clip = src->findAudioClip (clipId);
+    if (clip == nullptr) return -1;
+    newStart = std::max (0.0, newStart);
+    const double length = clip->lengthBeats;
+
+    if (fromTrack == toTrack)
+    {
+        if (! src->isAudioFree (newStart, length, clipId)) return -1;
+        clip->start = newStart;
+        growTo (clip->end() + 64.0);
+        if (onAudioClipsChanged) onAudioClipsChanged (fromTrack);
+        sendChangeMessage();
+        return clipId;
+    }
+
+    if (! dst->isAudioFree (newStart, length)) return -1;
+    auto moved = src->takeAudioClip (clipId);
+    moved->start = newStart;
+    dst->putAudioClip (std::move (moved));
+    const int newId = dst->audioClips.back()->id;
+    if (selectedTrackId == fromTrack && selectedAudioClipId == clipId)
+        selectAudioClip (toTrack, newId);
+    growTo (newStart + length + 64.0);
+    if (onAudioClipsChanged) onAudioClipsChanged (fromTrack);
+    if (onAudioClipsChanged) onAudioClipsChanged (toTrack);
     sendChangeMessage();
     return newId;
 }

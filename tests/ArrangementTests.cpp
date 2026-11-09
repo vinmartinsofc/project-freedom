@@ -45,3 +45,31 @@ TEST_CASE("Mover clip entre trilhas preserva as notas")
     REQUIRE(b.clips.size() == 1);
     REQUIRE(b.clips[0]->clip.notes().size() == 1);
 }
+
+TEST_CASE("Clips de audio preservam arquivo, waveform e limites de sobreposicao")
+{
+    Track track;
+    track.type = TrackType::Audio;
+    auto* a = track.addAudioClip (2.0, 3.0, "C:/audio/kick.wav", "kick.wav", { 0.2f, 0.8f });
+
+    REQUIRE(a->end() == 5.0);
+    REQUIRE(a->filePath == "C:/audio/kick.wav");
+    REQUIRE(a->waveform.size() == 2);
+    REQUIRE(a->waveform[1] == 0.8f);
+    REQUIRE(track.isAudioFree (5.0, 2.0));
+    REQUIRE_FALSE(track.isAudioFree (4.0, 2.0));
+    REQUIRE(track.isAudioFree (2.0, 3.0, a->id));
+}
+
+TEST_CASE("Mover clip de audio preserva seus metadados")
+{
+    Track source, destination;
+    auto* clip = source.addAudioClip (1.0, 4.0, "C:/audio/voice.wav", "voice.wav", { 0.4f, 0.7f });
+    auto moved = source.takeAudioClip (clip->id);
+
+    REQUIRE(source.audioClips.empty());
+    destination.putAudioClip (std::move (moved));
+    REQUIRE(destination.audioClips.size() == 1);
+    REQUIRE(destination.audioClips.front()->filePath == "C:/audio/voice.wav");
+    REQUIRE(destination.audioClips.front()->waveform.size() == 2);
+}

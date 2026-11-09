@@ -6,6 +6,8 @@
 
 namespace roll
 {
+enum class TrackType { Midi, Audio };
+
 // Um clip colocado na linha do tempo de uma trilha (posição em beats).
 struct Placement
 {
@@ -17,18 +19,31 @@ struct Placement
     double end() const { return start + clip.length(); }
 };
 
-// Trilha MIDI: clips + parâmetros de mixagem. Os clips ficam em heap (ponteiros estáveis).
+struct AudioPlacement
+{
+    int         id = 0;
+    double      start = 0.0;
+    double      lengthBeats = 0.0;
+    std::string name, filePath;
+    std::vector<float> waveform;
+
+    double end() const { return start + lengthBeats; }
+};
+
+// Trilha + parâmetros de mixagem. Clips ficam em heap (ponteiros estáveis).
 class Track
 {
 public:
     int         id = 0;
     std::string name;
+    TrackType   type = TrackType::Midi;
     double      volume = 0.8;     // ganho linear (0..1.5)
     double      pan = 0.0;        // -1..1
     bool        mute = false;
     bool        solo = false;
 
     std::vector<std::unique_ptr<Placement>> clips;
+    std::vector<std::unique_ptr<AudioPlacement>> audioClips;
 
     Placement* addClip (double start, double length);
     Placement* find (int clipId) const;
@@ -38,6 +53,14 @@ public:
 
     // O trecho [start, start+length) cabe sem encostar em outro clip (ignorando 'ignoreId')?
     bool isFree (double start, double length, int ignoreId = -1) const;
+
+    AudioPlacement* addAudioClip (double start, double length, std::string filePath,
+                                  std::string name, std::vector<float> waveform = {});
+    AudioPlacement* findAudioClip (int clipId) const;
+    std::unique_ptr<AudioPlacement> takeAudioClip (int clipId);
+    void putAudioClip (std::unique_ptr<AudioPlacement> clip);
+    bool removeAudioClip (int clipId);
+    bool isAudioFree (double start, double length, int ignoreId = -1) const;
 
     // Id de clip único dentro da trilha.
     int nextClipId() { return nextId++; }

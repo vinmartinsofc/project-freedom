@@ -88,7 +88,7 @@ void DeviceView::paint (juce::Graphics& g)
     g.setColour (theme::textDim());
     g.setFont (juce::FontOptions (12.0f));
     if (boxes.empty())
-        g.drawFittedText (theme::ui ("Trilha \"") + trackName + theme::ui ("\" sem dispositivos.\nDê duplo clique em um plugin da lista para adicionar.\n(O instrumento vai primeiro; efeitos entram em sequência.)"),
+        g.drawFittedText (theme::ui ("Trilha \"") + trackName + theme::ui ("\" sem dispositivos.\nDe duplo clique em um plugin da lista para adicionar.\n(O instrumento vai primeiro; efeitos entram em sequencia.)"),
                           getLocalBounds().reduced (20), juce::Justification::centred, 4);
 }
 

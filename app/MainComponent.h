@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "AudioEngine.h"
+#include "AudioFileBrowser.h"
 #include "ArrangementView.h"
 #include "BrowserPanel.h"
 #include "DeviceView.h"
@@ -33,7 +34,10 @@ private:
     void openDeviceEditor (int trackId, int deviceId);
     void updateActionIndicator();
     void setBrowserVisible (bool);
+    void setAudioBrowserVisible (bool);
     void setPianoRollVisible (bool);
+    void loadAudioFile (const juce::File&, int trackId, double startBeat);
+    void publishAudioTrack (int trackId);
     void closeWindowsOfTrack (int trackId);
     void refreshDeviceView();
     void applyMixers();
@@ -53,6 +57,7 @@ private:
 
     TransportBar transport { engine.graph() };
     BrowserPanel browser { scanner };
+    AudioFileBrowser audioBrowser;
     ArrangementView arrangement { project };
     PianoRollEditor editor { model };
     DeviceView deviceView;
@@ -69,9 +74,13 @@ private:
 
     std::map<int, std::unique_ptr<PluginWindow>> windows;
     std::map<int, juce::String> pendingPluginLoads;
+    std::map<std::string, std::shared_ptr<const AudioFileData>> audioAssets;
+    std::shared_ptr<std::atomic<bool>> lifetimeToken { std::make_shared<std::atomic<bool>> (true) };
     std::unique_ptr<ActionIndicator> actionIndicator;
     int nextPluginCascadeIndex = 0;
     int nextPluginLoadToken = 0;
+    int previewLoadToken = 0;
+    int pendingAudioLoads = 0;
     bool scanningPlugins = false;
     juce::String scanMessage;
 

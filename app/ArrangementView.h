@@ -18,6 +18,8 @@ public:
     std::function<juce::String (int)>   deviceSummary;
     std::function<bool (const juce::String& pluginIdentifier, int trackId)> canAcceptPluginDrop;
     std::function<void (const juce::String& pluginIdentifier, int trackId, double beats)> onPluginDropped;
+    std::function<bool (const juce::File&, int trackId)> canAcceptAudioDrop;
+    std::function<void (const juce::File&, int trackId, double beats)> onAudioDropped;
 
     void setPlayhead (double beats);
     void setLoopEnabled (bool on);
@@ -54,5 +56,5 @@ private:
     std::vector<std::unique_ptr<Header>> headers;
     juce::Viewport viewport;
     juce::Component headerHolder, rulerHolder;
-    juce::TextButton addTrackButton { "+ Trilha MIDI" };
+    juce::TextButton addTrackButton { "+ MIDI" }, addAudioTrackButton { "+ Audio" };
 };

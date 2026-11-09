@@ -47,10 +47,12 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     for (auto* b : std::initializer_list<juce::Component*> { &playButton, &stopButton, &rewindButton }) b->setMouseClickGrabsKeyboardFocus (false);
     loopButton.setMouseClickGrabsKeyboardFocus (false);
     browserButton.setMouseClickGrabsKeyboardFocus (false);
+    fileBrowserButton.setMouseClickGrabsKeyboardFocus (false);
     pianoRollButton.setMouseClickGrabsKeyboardFocus (false);
     rewindButton.onClick = [this] { rewind(); };
     addAndMakeVisible (loopButton);
     addAndMakeVisible (browserButton);
+    addAndMakeVisible (fileBrowserButton);
     addAndMakeVisible (pianoRollButton);
     addAndMakeVisible (bpmLabel);
     addAndMakeVisible (bpmCaption);
@@ -75,6 +77,17 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     {
         if (onBrowserToggled)
             onBrowserToggled (browserButton.getToggleState());
+    };
+
+    fileBrowserButton.setTooltip ("Mostrar ou ocultar o navegador de arquivos de audio");
+    fileBrowserButton.setClickingTogglesState (true);
+    fileBrowserButton.setToggleState (false, juce::dontSendNotification);
+    fileBrowserButton.setColour (juce::TextButton::buttonOnColourId, theme::accent());
+    fileBrowserButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    fileBrowserButton.onClick = [this]
+    {
+        if (onFileBrowserToggled)
+            onFileBrowserToggled (fileBrowserButton.getToggleState());
     };
 
     pianoRollButton.setTooltip ("Mostrar ou ocultar o painel inferior do piano roll e dispositivos");
@@ -132,6 +145,11 @@ void TransportBar::setBrowserVisible (bool visible)
     browserButton.setToggleState (visible, juce::dontSendNotification);
 }
 
+void TransportBar::setFileBrowserVisible (bool visible)
+{
+    fileBrowserButton.setToggleState (visible, juce::dontSendNotification);
+}
+
 void TransportBar::setPianoRollVisible (bool visible)
 {
     pianoRollButton.setToggleState (visible, juce::dontSendNotification);
@@ -181,6 +199,8 @@ void TransportBar::resized()
     positionLabel.setBounds (area.removeFromLeft (120));
     area.removeFromLeft (12);
     browserButton.setBounds (area.removeFromRight (88));
+    area.removeFromRight (6);
+    fileBrowserButton.setBounds (area.removeFromRight (72));
     area.removeFromRight (6);
     pianoRollButton.setBounds (area.removeFromRight (104));
 }

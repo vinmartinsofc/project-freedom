@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_audio_utils/juce_audio_utils.h>
+#include "Arrangement.h"
 #include "Sequencer.h"
 #include <atomic>
 #include <functional>
@@ -128,6 +129,83 @@ struct DeviceInfo
     bool isBypassed = false;
 };
 
+struct AudioFileData
+{
+    juce::File file;
+    std::shared_ptr<juce::AudioBuffer<float>> samples;
+    std::vector<float> waveform;
+    double sampleRate = 0.0;
+    double durationSeconds = 0.0;
+};
+
+struct AudioClipPlayback
+{
+    double startBeat = 0.0;
+    double lengthBeats = 0.0;
+    std::shared_ptr<const AudioFileData> source;
+};
+
+class TrackAudioSource : public juce::AudioProcessor
+{
+public:
+    explicit TrackAudioSource (const BlockShared&);
+    void publishClips (const std::vector<AudioClipPlayback>&);
+    const juce::String getName() const override { return "Track Audio"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using juce::AudioProcessor::processBlock;
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+
+private:
+    const BlockShared& shared;
+    juce::SpinLock clipsLock;
+    std::vector<AudioClipPlayback> pendingClips, localClips;
+};
+
+class AudioPreviewSource : public juce::AudioProcessor
+{
+public:
+    AudioPreviewSource();
+    void play (std::shared_ptr<const AudioFileData>);
+    void stop();
+    const juce::String getName() const override { return "Audio Preview"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using juce::AudioProcessor::processBlock;
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+
+private:
+    juce::SpinLock sourceLock;
+    std::shared_ptr<const AudioFileData> pendingSource, localSource;
+    std::uint64_t pendingVersion = 0, localVersion = 0;
+    std::atomic<bool> playing { false };
+    double positionSamples = 0.0;
+};
+
 class AudioEngine
 {
 public:
@@ -138,9 +216,10 @@ public:
     juce::AudioPluginFormatManager& formats()  { return formatManager; }
 
     // trilhas
-    void addTrack (int trackId);
+    void addTrack (int trackId, roll::TrackType type = roll::TrackType::Midi);
     void removeTrack (int trackId);
     void publishNotes (int trackId, const std::vector<roll::Note>& notes);
+    void publishAudioClips (int trackId, const std::vector<AudioClipPlayback>& clips);
     void setMixer (int trackId, float gain, float pan, bool muted);
     void previewNote (int trackId, int pitch, bool on);
     void activeMask (int trackId, std::uint64_t& lo, std::uint64_t& hi) const;
@@ -148,6 +227,10 @@ public:
 
     // dispositivos (plugins) da trilha: o instrumento vem sempre primeiro, efeitos em seguida
     void addDevice (int trackId, const juce::PluginDescription&, std::function<void (const juce::String& error, int deviceId)> onDone);
+    void loadAudioFileAsync (const juce::File&, std::function<void (const juce::String&, std::shared_ptr<const AudioFileData>)>);
+    void previewAudio (std::shared_ptr<const AudioFileData> source);
+    void stopAudioPreview();
+    bool canAcceptPlugin (int trackId, const juce::PluginDescription&) const;
     void removeDevice (int trackId, int deviceId);
     void setDeviceBypassed (int trackId, int deviceId, bool bypassed);
     std::vector<DeviceInfo> devices (int trackId) const;
@@ -165,7 +248,9 @@ private:
     {
         juce::AudioProcessorGraph::Node::Ptr source, mixer;
         TrackSource* sourcePtr = nullptr;
+        TrackAudioSource* audioSourcePtr = nullptr;
         TrackMixer*  mixerPtr = nullptr;
+        bool audioTrack = false;
         std::vector<Device> devices;
     };
 
@@ -176,9 +261,13 @@ private:
 
     juce::AudioDeviceManager deviceManager;
     juce::AudioPluginFormatManager formatManager;
+    juce::AudioFormatManager audioFormatManager;
+    juce::ThreadPool audioLoadPool { 1 };
     SequencerGraph seqGraph;
     juce::AudioProcessorPlayer player;
     juce::AudioProcessorGraph::Node::Ptr outputNode;
+    juce::AudioProcessorGraph::Node::Ptr previewNode;
+    AudioPreviewSource* previewSourcePtr = nullptr;
     std::map<int, TrackNodes> tracks;
     std::set<std::pair<int, std::string>> pendingPluginLoads;
     int nextDeviceId = 1;

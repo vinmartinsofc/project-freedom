@@ -1,6 +1,8 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "Theme.h"
+#include <functional>
+#include <vector>
 
 class AudioFileBrowser : public juce::Component
 {
@@ -8,14 +10,26 @@ public:
     AudioFileBrowser();
     std::function<void (const juce::File&)> onPreviewRequested;
     std::function<void()> onPreviewStopRequested;
+    void setFavoritesMode (bool);
     void setStatus (const juce::String& text) { status.setText (text, juce::dontSendNotification); }
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
+    struct Favorite
+    {
+        juce::File file;
+        int color = 0;
+    };
+
     class FileTreeItem;
     void populate (FileTreeItem&);
     void selectFile (const juce::File&);
+    void showFavoriteMenu (const juce::File&, juce::Point<int> screenPosition);
+    void setFavorite (const juce::File&, int color);
+    void removeFavorite (const juce::File&);
+    void loadFavorites();
+    void saveFavorites();
     static bool isAudioFile (const juce::File&);
 
     juce::Label title { {}, "Arquivos de audio" };
@@ -23,4 +37,8 @@ private:
     juce::TreeView tree;
     juce::TextButton previewButton { "Ouvir" }, stopButton { "Parar" };
     juce::File selectedFile;
+    juce::ApplicationProperties favoriteProperties;
+    juce::PropertiesFile* favoriteSettings = nullptr;
+    std::vector<Favorite> favorites;
+    bool showingFavorites = false;
 };

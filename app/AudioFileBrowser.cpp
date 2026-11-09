@@ -1,18 +1,40 @@
 #include "AudioFileBrowser.h"
 #include <algorithm>
+#include <array>
 #include <vector>
+
+namespace
+{
+const std::array<juce::Colour, 7> favoriteColors {
+    juce::Colour (0xfff44336), juce::Colour (0xffff9800), juce::Colour (0xffffeb3b),
+    juce::Colour (0xff4caf50), juce::Colour (0xff2196f3), juce::Colour (0xff9c27b0),
+    juce::Colour (0xff9e9e9e)
+};
+
+const std::array<const char*, 7> favoriteColorNames {
+    "Vermelho", "Laranja", "Amarelo", "Verde", "Azul", "Roxo", "Cinza"
+};
+}
 
 class AudioFileBrowser::FileTreeItem : public juce::TreeViewItem
 {
 public:
-    FileTreeItem (AudioFileBrowser& browser, juce::File path, bool computer = false)
-        : owner (browser), file (std::move (path)), computerRoot (computer) {}
+    enum class Kind { FileSystem, ComputerRoot, FavoritesRoot, FavoriteCategory, FavoriteEntry };
 
-    bool mightContainSubItems() override { return computerRoot || file.isDirectory(); }
+    FileTreeItem (AudioFileBrowser& browser, juce::File path, Kind itemKind = Kind::FileSystem, int color = -1)
+        : owner (browser), file (std::move (path)), kind (itemKind), favoriteColor (color) {}
+
+    bool mightContainSubItems() override
+    {
+        return (kind != Kind::FileSystem && kind != Kind::FavoriteEntry) || file.isDirectory();
+    }
 
     juce::String getUniqueName() const override
     {
-        return computerRoot ? "computer" : file.getFullPathName();
+        if (kind == Kind::ComputerRoot) return "computer";
+        if (kind == Kind::FavoritesRoot) return "favorites";
+        if (kind == Kind::FavoriteCategory) return "favorite-" + juce::String (favoriteColor);
+        return file.getFullPathName();
     }
 
     const juce::File& getFile() const { return file; }
@@ -20,12 +42,21 @@ public:
     void itemSelectionChanged (bool isNowSelected) override
     {
         if (isNowSelected)
-            owner.selectFile (file.isDirectory() ? juce::File() : file);
+            owner.selectFile (kind == Kind::FileSystem || kind == Kind::FavoriteEntry ? file : juce::File());
+    }
+
+    void itemClicked (const juce::MouseEvent& event) override
+    {
+        if (event.mods.isPopupMenu()
+            && (kind == Kind::FileSystem || kind == Kind::FavoriteEntry)
+            && (file.isDirectory() || AudioFileBrowser::isAudioFile (file)))
+            owner.showFavoriteMenu (file, event.getScreenPosition());
     }
 
     juce::var getDragSourceDescription() override
     {
-        return ! computerRoot && file.existsAsFile() && AudioFileBrowser::isAudioFile (file)
+        return (kind == Kind::FileSystem || kind == Kind::FavoriteEntry)
+                && file.existsAsFile() && AudioFileBrowser::isAudioFile (file)
             ? juce::var ("audio:" + file.getFullPathName()) : juce::var();
     }
 
@@ -34,10 +65,30 @@ public:
         if (isSelected())
             g.fillAll (theme::accent().withAlpha (0.25f));
 
+        juce::String label;
+        bool isBold = false;
+        if (kind == Kind::ComputerRoot) { label = "Este Computador"; isBold = true; }
+        else if (kind == Kind::FavoritesRoot) { label = "Favoritos"; isBold = true; }
+        else if (kind == Kind::FavoriteCategory)
+        {
+            label = favoriteColorNames[static_cast<std::size_t> (favoriteColor)];
+            isBold = true;
+        }
+        else
+        {
+            label = file.getFileName();
+            isBold = file.isDirectory();
+        }
+
+        const int textX = favoriteColor >= 0 ? 22 : 5;
+        if (favoriteColor >= 0)
+        {
+            g.setColour (favoriteColors[static_cast<std::size_t> (favoriteColor)]);
+            g.fillRoundedRectangle (5.0f, static_cast<float> (height / 2 - 5), 10.0f, 10.0f, 2.0f);
+        }
         g.setColour (theme::text());
-        g.setFont (juce::FontOptions (12.0f, file.isDirectory() || computerRoot ? juce::Font::bold : juce::Font::plain));
-        const auto label = computerRoot ? "Este Computador" : file.getFileName();
-        g.drawText (label, 5, 0, width - 10, height, juce::Justification::centredLeft, true);
+        g.setFont (juce::FontOptions (12.0f, isBold ? juce::Font::bold : juce::Font::plain));
+        g.drawText (label, textX, 0, width - textX - 5, height, juce::Justification::centredLeft, true);
     }
 
     void itemOpennessChanged (bool isOpen) override
@@ -49,18 +100,28 @@ public:
 private:
     AudioFileBrowser& owner;
     juce::File file;
-    bool computerRoot = false;
+    Kind kind;
+    int favoriteColor = -1;
 };
 
 AudioFileBrowser::AudioFileBrowser()
 {
+    juce::PropertiesFile::Options options;
+    options.applicationName = "ProjectFreedomAudioFavorites";
+    options.filenameSuffix = ".settings";
+    options.folderName = "ProjectFreedom";
+    options.osxLibrarySubFolder = "Application Support";
+    favoriteProperties.setStorageParameters (options);
+    favoriteSettings = favoriteProperties.getUserSettings();
+    loadFavorites();
+
     title.setFont (juce::FontOptions (13.0f, juce::Font::bold));
     title.setColour (juce::Label::textColourId, theme::text());
     addAndMakeVisible (title);
 
     tree.setColour (juce::TreeView::backgroundColourId, theme::panel());
     tree.setRootItemVisible (true);
-    tree.setRootItem (new FileTreeItem (*this, {}, true));
+    tree.setRootItem (new FileTreeItem (*this, {}, FileTreeItem::Kind::ComputerRoot));
     tree.getRootItem()->setOpen (true);
     tree.setIndentSize (10);
     addAndMakeVisible (tree);
@@ -108,6 +169,19 @@ void AudioFileBrowser::resized()
     status.setBounds (area);
 }
 
+void AudioFileBrowser::setFavoritesMode (bool showing)
+{
+    if (showingFavorites == showing)
+        return;
+
+    showingFavorites = showing;
+    selectFile ({});
+    title.setText (showingFavorites ? "Favoritos" : "Arquivos de audio", juce::dontSendNotification);
+    tree.setRootItem (new FileTreeItem (*this, {}, showingFavorites
+        ? FileTreeItem::Kind::FavoritesRoot : FileTreeItem::Kind::ComputerRoot));
+    tree.getRootItem()->setOpen (true);
+}
+
 bool AudioFileBrowser::isAudioFile (const juce::File& file)
 {
     const auto extension = file.getFileExtension().toLowerCase();
@@ -126,8 +200,130 @@ void AudioFileBrowser::selectFile (const juce::File& file)
                    : "Selecione um arquivo de audio para ouvir");
 }
 
+void AudioFileBrowser::showFavoriteMenu (const juce::File& file, juce::Point<int> screenPosition)
+{
+    const auto existing = std::find_if (favorites.begin(), favorites.end(),
+        [&file] (const Favorite& favorite) { return favorite.file == file; });
+
+    juce::PopupMenu colors;
+    for (int color = 0; color < static_cast<int> (favoriteColorNames.size()); ++color)
+        colors.addItem (color + 1, favoriteColorNames[static_cast<std::size_t> (color)]);
+
+    juce::PopupMenu menu;
+    menu.addSubMenu ("Adicionar aos favoritos", colors);
+    if (existing != favorites.end())
+        menu.addItem (20, "Remover dos favoritos");
+
+    juce::Component::SafePointer<AudioFileBrowser> safeThis (this);
+    const juce::PopupMenu::Options options;
+    menu.showMenuAsync (options.withTargetScreenArea ({ screenPosition.x, screenPosition.y, 1, 1 }),
+        [safeThis, file] (int result)
+        {
+            if (safeThis == nullptr)
+                return;
+            if (result >= 1 && result <= 7)
+                safeThis->setFavorite (file, result - 1);
+            else if (result == 20)
+                safeThis->removeFavorite (file);
+        });
+}
+
+void AudioFileBrowser::setFavorite (const juce::File& file, int color)
+{
+    if (! file.exists() || (! file.isDirectory() && ! isAudioFile (file))
+        || color < 0 || color >= static_cast<int> (favoriteColors.size()))
+        return;
+
+    const auto existing = std::find_if (favorites.begin(), favorites.end(),
+        [&file] (const Favorite& favorite) { return favorite.file == file; });
+    if (existing == favorites.end())
+        favorites.push_back ({ file, color });
+    else
+        existing->color = color;
+
+    saveFavorites();
+    if (showingFavorites)
+    {
+        setFavoritesMode (false);
+        setFavoritesMode (true);
+    }
+}
+
+void AudioFileBrowser::removeFavorite (const juce::File& file)
+{
+    favorites.erase (std::remove_if (favorites.begin(), favorites.end(),
+        [&file] (const Favorite& favorite) { return favorite.file == file; }), favorites.end());
+    saveFavorites();
+    if (showingFavorites)
+    {
+        setFavoritesMode (false);
+        setFavoritesMode (true);
+    }
+}
+
+void AudioFileBrowser::loadFavorites()
+{
+    if (favoriteSettings == nullptr)
+        return;
+
+    const auto xml = juce::parseXML (favoriteSettings->getValue ("audioFavorites"));
+    if (xml == nullptr)
+        return;
+
+    const auto root = juce::ValueTree::fromXml (*xml);
+    for (int i = 0; i < root.getNumChildren(); ++i)
+    {
+        const auto item = root.getChild (i);
+        const juce::File file (item.getProperty ("path").toString());
+        const int color = static_cast<int> (item.getProperty ("color", 0));
+        if (file.exists() && (file.isDirectory() || isAudioFile (file))
+            && color >= 0 && color < static_cast<int> (favoriteColors.size()))
+            favorites.push_back ({ file, color });
+    }
+}
+
+void AudioFileBrowser::saveFavorites()
+{
+    if (favoriteSettings == nullptr)
+        return;
+
+    juce::ValueTree root ("Favorites");
+    for (const auto& favorite : favorites)
+    {
+        juce::ValueTree item ("Item");
+        item.setProperty ("path", favorite.file.getFullPathName(), nullptr);
+        item.setProperty ("color", favorite.color, nullptr);
+        root.appendChild (item, nullptr);
+    }
+    favoriteSettings->setValue ("audioFavorites", root.toXmlString());
+    favoriteSettings->saveIfNeeded();
+}
+
 void AudioFileBrowser::populate (FileTreeItem& item)
 {
+    if (item.getUniqueName() == "favorites")
+    {
+        for (int color = 0; color < static_cast<int> (favoriteColorNames.size()); ++color)
+            item.addSubItem (new FileTreeItem (*this, {}, FileTreeItem::Kind::FavoriteCategory, color));
+        return;
+    }
+
+    if (item.getUniqueName().startsWith ("favorite-"))
+    {
+        const int color = item.getUniqueName().substring (9).getIntValue();
+        std::vector<juce::File> entries;
+        for (const auto& favorite : favorites)
+            if (favorite.color == color)
+                entries.push_back (favorite.file);
+        std::sort (entries.begin(), entries.end(), [] (const juce::File& a, const juce::File& b)
+        {
+            return a.getFileName().compareIgnoreCase (b.getFileName()) < 0;
+        });
+        for (const auto& file : entries)
+            item.addSubItem (new FileTreeItem (*this, file, FileTreeItem::Kind::FavoriteEntry, color));
+        return;
+    }
+
     if (item.getUniqueName() == "computer")
     {
         juce::Array<juce::File> roots;

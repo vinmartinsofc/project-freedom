@@ -48,11 +48,13 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     loopButton.setMouseClickGrabsKeyboardFocus (false);
     browserButton.setMouseClickGrabsKeyboardFocus (false);
     fileBrowserButton.setMouseClickGrabsKeyboardFocus (false);
+    favoritesButton.setMouseClickGrabsKeyboardFocus (false);
     pianoRollButton.setMouseClickGrabsKeyboardFocus (false);
     rewindButton.onClick = [this] { rewind(); };
     addAndMakeVisible (loopButton);
     addAndMakeVisible (browserButton);
     addAndMakeVisible (fileBrowserButton);
+    addAndMakeVisible (favoritesButton);
     addAndMakeVisible (pianoRollButton);
     addAndMakeVisible (bpmLabel);
     addAndMakeVisible (bpmCaption);
@@ -66,7 +68,7 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     loopButton.setToggleState (graph.isLoop(), juce::dontSendNotification);
     loopButton.setColour (juce::TextButton::buttonOnColourId, theme::accent());
     loopButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
-    loopButton.onClick = [this] { graph.setLoop (loopButton.getToggleState()); if (onLoopToggled) onLoopToggled (loopButton.getToggleState()); };
+    loopButton.onClick = [this] { setLoopEnabled (loopButton.getToggleState()); };
 
     browserButton.setTooltip ("Mostrar ou ocultar o navegador de plugins (Ctrl+B)");
     browserButton.setClickingTogglesState (true);
@@ -88,6 +90,17 @@ TransportBar::TransportBar (SequencerGraph& g) : graph (g)
     {
         if (onFileBrowserToggled)
             onFileBrowserToggled (fileBrowserButton.getToggleState());
+    };
+
+    favoritesButton.setTooltip ("Mostrar colecoes de favoritos por cor");
+    favoritesButton.setClickingTogglesState (true);
+    favoritesButton.setToggleState (false, juce::dontSendNotification);
+    favoritesButton.setColour (juce::TextButton::buttonOnColourId, theme::accent());
+    favoritesButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    favoritesButton.onClick = [this]
+    {
+        if (onFavoritesToggled)
+            onFavoritesToggled (favoritesButton.getToggleState());
     };
 
     pianoRollButton.setTooltip ("Mostrar ou ocultar o painel inferior do piano roll e dispositivos");
@@ -131,6 +144,14 @@ void TransportBar::togglePlay()
     updateButtons();
 }
 
+void TransportBar::setLoopEnabled (bool on)
+{
+    graph.setLoop (on);
+    loopButton.setToggleState (on, juce::dontSendNotification);
+    if (onLoopToggled)
+        onLoopToggled (on);
+}
+
 void TransportBar::rewind() { graph.rewind(); }
 
 void TransportBar::stop()
@@ -148,6 +169,11 @@ void TransportBar::setBrowserVisible (bool visible)
 void TransportBar::setFileBrowserVisible (bool visible)
 {
     fileBrowserButton.setToggleState (visible, juce::dontSendNotification);
+}
+
+void TransportBar::setFavoritesVisible (bool visible)
+{
+    favoritesButton.setToggleState (visible, juce::dontSendNotification);
 }
 
 void TransportBar::setPianoRollVisible (bool visible)
@@ -201,6 +227,8 @@ void TransportBar::resized()
     browserButton.setBounds (area.removeFromRight (88));
     area.removeFromRight (6);
     fileBrowserButton.setBounds (area.removeFromRight (72));
+    area.removeFromRight (6);
+    favoritesButton.setBounds (area.removeFromRight (100));
     area.removeFromRight (6);
     pianoRollButton.setBounds (area.removeFromRight (104));
 }

@@ -35,9 +35,13 @@ private:
     void updateActionIndicator();
     void setBrowserVisible (bool);
     void setAudioBrowserVisible (bool);
+    void setFavoritesVisible (bool);
     void setPianoRollVisible (bool);
     void loadAudioFile (const juce::File&, int trackId, double startBeat);
     void publishAudioTrack (int trackId);
+    bool selectedTrackSpan (double& start, double& end) const;
+    void playSelectedTrack();
+    void loopSelectedTrack();
     void closeWindowsOfTrack (int trackId);
     void refreshDeviceView();
     void applyMixers();

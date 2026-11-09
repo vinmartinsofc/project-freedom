@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "WindowPlacement.h"
 #include <algorithm>
+#include <limits>
 #include <set>
 #include <utility>
 
@@ -324,6 +325,7 @@ MainComponent::MainComponent()
     transport.onLoopToggled = [this] (bool on) { arrangement.setLoopEnabled (on); };
     transport.onBrowserToggled = [this] (bool visible) { setBrowserVisible (visible); };
     transport.onFileBrowserToggled = [this] (bool visible) { setAudioBrowserVisible (visible); };
+    transport.onFavoritesToggled = [this] (bool visible) { setFavoritesVisible (visible); };
     transport.onPianoRollToggled = [this] (bool visible) { setPianoRollVisible (visible); };
 
     deviceView.onOpen = [this] (int trackId, int deviceId) { openDeviceEditor (trackId, deviceId); };
@@ -498,11 +500,13 @@ void MainComponent::mouseDrag (const juce::MouseEvent& e)
         const int maxBrowserWidth = std::max (200, std::min (460, getWidth() - 776));
         browserWidth = std::clamp (getWidth() - 8 - e.x, 200, maxBrowserWidth);
         resized();
+        repaint();
     }
     else if (draggingSplitter)
     {
         arrangementRatio = std::clamp (static_cast<double> (e.y - rightTop) / rightHeight, 0.15, 0.75);
         resized();
+        repaint();
     }
 }
 
@@ -531,7 +535,9 @@ void MainComponent::setBrowserVisible (bool visible)
     if (visible && audioBrowser.isVisible())
     {
         audioBrowser.setVisible (false);
+        audioBrowser.setFavoritesMode (false);
         transport.setFileBrowserVisible (false);
+        transport.setFavoritesVisible (false);
     }
     browser.setVisible (visible);
     transport.setBrowserVisible (visible);
@@ -545,8 +551,25 @@ void MainComponent::setAudioBrowserVisible (bool visible)
         browser.setVisible (false);
         transport.setBrowserVisible (false);
     }
+    if (visible)
+        audioBrowser.setFavoritesMode (false);
     audioBrowser.setVisible (visible);
     transport.setFileBrowserVisible (visible);
+    transport.setFavoritesVisible (false);
+    resized();
+}
+
+void MainComponent::setFavoritesVisible (bool visible)
+{
+    if (visible && browser.isVisible())
+    {
+        browser.setVisible (false);
+        transport.setBrowserVisible (false);
+    }
+    audioBrowser.setFavoritesMode (visible);
+    audioBrowser.setVisible (visible);
+    transport.setFileBrowserVisible (false);
+    transport.setFavoritesVisible (visible);
     resized();
 }
 
@@ -619,6 +642,68 @@ void MainComponent::publishAudioTrack (int trackId)
             ++it;
 }
 
+bool MainComponent::selectedTrackSpan (double& start, double& end) const
+{
+    const auto* track = project.selectedTrack();
+    if (track == nullptr)
+        return false;
+
+    start = std::numeric_limits<double>::max();
+    end = 0.0;
+    if (track->type == roll::TrackType::Audio)
+    {
+        for (const auto& clip : track->audioClips)
+        {
+            start = std::min (start, clip->start);
+            end = std::max (end, clip->end());
+        }
+    }
+    else
+    {
+        for (const auto& clip : track->clips)
+        {
+            start = std::min (start, clip->start);
+            end = std::max (end, clip->end());
+        }
+    }
+    return start != std::numeric_limits<double>::max();
+}
+
+void MainComponent::playSelectedTrack()
+{
+    if (engine.graph().isPlaying())
+    {
+        transport.togglePlay();
+        return;
+    }
+
+    double start = 0.0, end = 0.0;
+    if (selectedTrackSpan (start, end))
+    {
+        if (engine.graph().isLoop() && (start < project.loopStart || end > project.loopEnd))
+            transport.setLoopEnabled (false);
+        engine.graph().seek (start);
+        arrangement.setPlayhead (start);
+        editor.setPlayhead (start - model.clipStartBeats);
+    }
+    else
+    {
+        engine.graph().seek (0.0);
+        arrangement.setPlayhead (0.0);
+    }
+    transport.togglePlay();
+}
+
+void MainComponent::loopSelectedTrack()
+{
+    double start = 0.0, end = 0.0;
+    if (! selectedTrackSpan (start, end))
+        return;
+
+    project.setLoop (start, end);
+    transport.setLoopEnabled (true);
+}
+
 // ------------------------------------------------------------ teclado
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)
@@ -629,7 +714,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
         setBrowserVisible (! browser.isVisible());
         return true;
     }
-    if (k == juce::KeyPress::spaceKey) { transport.togglePlay(); return true; }
+    if (k.getModifiers().isCtrlDown()
+        && juce::CharacterFunctions::toLowerCase (k.getKeyCode()) == 'l')
+    {
+        loopSelectedTrack();
+        return true;
+    }
+    if (k == juce::KeyPress::spaceKey) { playSelectedTrack(); return true; }
     if (k == juce::KeyPress::homeKey)  { transport.rewind(); return true; }
     if (k == juce::KeyPress (juce::KeyPress::F12Key) || k == juce::KeyPress (juce::KeyPress::tabKey, juce::ModifierKeys::shiftModifier, 0))
     {

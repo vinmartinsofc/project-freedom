@@ -36,9 +36,11 @@ public:
     void deleteClip (int trackId, int clipId);
     roll::AudioPlacement* addAudioClip (int trackId, double start, double length,
                                         const std::string& filePath, const std::string& name,
-                                        const std::vector<float>& waveform);
+                                        const std::vector<float>& waveform,
+                                        double durationSeconds = 0.0, double sourceBpm = 120.0);
     void deleteAudioClip (int trackId, int clipId);
     bool resizeAudioClip (int trackId, int clipId, double length);
+    bool setAudioClipSourceBpm (int trackId, int clipId, double sourceBpm);
     // move para outra trilha/posição; devolve o novo id do clip (ou -1 se não coube)
     int  moveClip (int fromTrack, int clipId, int toTrack, double newStart);
     int  moveAudioClip (int fromTrack, int clipId, int toTrack, double newStart);

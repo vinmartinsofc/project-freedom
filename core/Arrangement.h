@@ -24,6 +24,8 @@ struct AudioPlacement
     int         id = 0;
     double      start = 0.0;
     double      lengthBeats = 0.0;
+    double      durationSeconds = 0.0;
+    double      sourceBpm = 120.0;
     std::string name, filePath;
     std::vector<float> waveform;
 
@@ -55,7 +57,8 @@ public:
     bool isFree (double start, double length, int ignoreId = -1) const;
 
     AudioPlacement* addAudioClip (double start, double length, std::string filePath,
-                                  std::string name, std::vector<float> waveform = {});
+                                  std::string name, std::vector<float> waveform = {},
+                                  double durationSeconds = 0.0, double sourceBpm = 120.0);
     AudioPlacement* findAudioClip (int clipId) const;
     std::unique_ptr<AudioPlacement> takeAudioClip (int clipId);
     void putAudioClip (std::unique_ptr<AudioPlacement> clip);

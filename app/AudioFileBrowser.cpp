@@ -51,6 +51,9 @@ public:
             && (kind == Kind::FileSystem || kind == Kind::FavoriteEntry)
             && (file.isDirectory() || AudioFileBrowser::isAudioFile (file)))
             owner.showFavoriteMenu (file, event.getScreenPosition());
+        else if (! event.mods.isPopupMenu()
+                 && (kind == Kind::FileSystem || kind == Kind::FavoriteEntry))
+            owner.previewFile (file);
     }
 
     juce::var getDragSourceDescription() override
@@ -144,9 +147,27 @@ AudioFileBrowser::AudioFileBrowser()
             onPreviewStopRequested();
         setStatus ("Preview parado");
     };
+    autoPreviewButton.setClickingTogglesState (true);
+    autoPreviewButton.setToggleState (true, juce::dontSendNotification);
+    autoPreviewButton.setTooltip ("Reproduzir automaticamente ao selecionar um arquivo");
+    previewGain.setSliderStyle (juce::Slider::LinearHorizontal);
+    previewGain.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    previewGain.setRange (0.0, 1.0, 0.01);
+    previewGain.setValue (0.5, juce::dontSendNotification);
+    previewGain.setTooltip ("Volume da pre-escuta");
+    previewGainLabel.setColour (juce::Label::textColourId, theme::textDim());
+    previewGainLabel.setFont (juce::FontOptions (11.0f));
+    previewGain.onValueChange = [this]
+    {
+        if (onPreviewGainChanged)
+            onPreviewGainChanged (static_cast<float> (previewGain.getValue()));
+    };
     previewButton.setEnabled (false);
     addAndMakeVisible (previewButton);
     addAndMakeVisible (stopButton);
+    addAndMakeVisible (autoPreviewButton);
+    addAndMakeVisible (previewGainLabel);
+    addAndMakeVisible (previewGain);
 }
 
 void AudioFileBrowser::paint (juce::Graphics& g)
@@ -161,9 +182,14 @@ void AudioFileBrowser::resized()
     auto area = getLocalBounds().reduced (8);
     title.setBounds (area.removeFromTop (28));
     auto controls = area.removeFromTop (28);
-    previewButton.setBounds (controls.removeFromLeft (68));
-    controls.removeFromLeft (4);
-    stopButton.setBounds (controls.removeFromLeft (68));
+    autoPreviewButton.setBounds (controls.removeFromLeft (56));
+    controls.removeFromLeft (2);
+    previewButton.setBounds (controls.removeFromLeft (58));
+    controls.removeFromLeft (2);
+    stopButton.setBounds (controls.removeFromLeft (56));
+    auto volume = area.removeFromTop (22);
+    previewGainLabel.setBounds (volume.removeFromLeft (48));
+    previewGain.setBounds (volume);
     area.removeFromTop (4);
     tree.setBounds (area.removeFromTop (std::max (0, area.getHeight() - 30)));
     status.setBounds (area);
@@ -198,6 +224,18 @@ void AudioFileBrowser::selectFile (const juce::File& file)
     setStatus (selectedFile.existsAsFile()
                    ? "Selecionado: " + selectedFile.getFileName()
                    : "Selecione um arquivo de audio para ouvir");
+}
+
+void AudioFileBrowser::previewFile (const juce::File& file)
+{
+    if (autoPreviewButton.getToggleState() && file.existsAsFile() && isAudioFile (file))
+    {
+        selectedFile = file;
+        previewButton.setEnabled (true);
+        setStatus ("Carregando preview...");
+        if (onPreviewRequested)
+            onPreviewRequested (file);
+    }
 }
 
 void AudioFileBrowser::showFavoriteMenu (const juce::File& file, juce::Point<int> screenPosition)

@@ -175,8 +175,9 @@ void TrackAudioSource::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
                 continue;
 
             const auto& source = *clip.source->samples;
-            const double sourceStep = clip.source->sampleRate / outputRate;
-            const double sourceStart = (activeStart - clip.startBeat) * 60.0 / bpm * clip.source->sampleRate;
+            const double sourceBpm = std::max (20.0, clip.sourceBpm);
+            const double sourceStep = clip.source->sampleRate / outputRate * bpm / sourceBpm;
+            const double sourceStart = (activeStart - clip.startBeat) * 60.0 / sourceBpm * clip.source->sampleRate;
             const int outputStart = segment.offset + static_cast<int> (std::lround ((activeStart - segment.a) / shared.plan.beatsPerSample));
             const int outputEnd = std::min (buffer.getNumSamples(),
                                             segment.offset + segment.samples);
@@ -248,8 +249,10 @@ void AudioPreviewSource::processBlock (juce::AudioBuffer<float>& buffer, juce::M
 
     const auto& samples = *localSource->samples;
     const double sourceStep = localSource->sampleRate / getSampleRate();
+    const float gainStep = (targetGain.load() - currentGain) / static_cast<float> (std::max (1, buffer.getNumSamples()));
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
+        currentGain += gainStep;
         const int firstIndex = static_cast<int> (positionSamples);
         if (firstIndex >= samples.getNumSamples())
         {
@@ -264,7 +267,7 @@ void AudioPreviewSource::processBlock (juce::AudioBuffer<float>& buffer, juce::M
             const int sourceChannel = std::min (channel, samples.getNumChannels() - 1);
             const float first = samples.getSample (sourceChannel, firstIndex);
             const float second = samples.getSample (sourceChannel, secondIndex);
-            buffer.setSample (channel, i, first + (second - first) * fraction);
+            buffer.setSample (channel, i, (first + (second - first) * fraction) * currentGain);
         }
         positionSamples += sourceStep;
     }
@@ -551,6 +554,11 @@ void AudioEngine::previewAudio (std::shared_ptr<const AudioFileData> source)
 void AudioEngine::stopAudioPreview()
 {
     previewSourcePtr->stop();
+}
+
+void AudioEngine::setAudioPreviewGain (float gain)
+{
+    previewSourcePtr->setGain (gain);
 }
 
 bool AudioEngine::canAcceptPlugin (int trackId, const juce::PluginDescription& description) const

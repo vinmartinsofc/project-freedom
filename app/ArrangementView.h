@@ -20,12 +20,16 @@ public:
     std::function<void (const juce::String& pluginIdentifier, int trackId, double beats)> onPluginDropped;
     std::function<bool (const juce::File&, int trackId)> canAcceptAudioDrop;
     std::function<void (const juce::File&, int trackId, double beats)> onAudioDropped;
+    std::function<void (int trackId, int clipId)> onAudioClipDoubleClicked;
+    std::function<void()> onGridChanged;
 
     void setPlayhead (double beats);
     void setLoopEnabled (bool on);
     void refresh();                       // recria os cabeçalhos
     void grabFocus();
     void zoom (double factor);
+    double gridBeats() const { return gridBeat; }
+    double snapBeat (double beat) const;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -50,6 +54,7 @@ private:
     double ppb = 22.0;                    // pixels por beat
     double playhead = 0.0;
     bool loopEnabled = true;
+    double gridBeat = 0.25;
 
     std::unique_ptr<Lanes> lanes;
     std::unique_ptr<Ruler> ruler;
@@ -57,4 +62,5 @@ private:
     juce::Viewport viewport;
     juce::Component headerHolder, rulerHolder;
     juce::TextButton addTrackButton { "+ MIDI" }, addAudioTrackButton { "+ Audio" };
+    juce::ComboBox gridBox;
 };

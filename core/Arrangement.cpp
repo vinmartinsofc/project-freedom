@@ -51,12 +51,15 @@ bool Track::isFree (double start, double length, int ignoreId) const
 }
 
 AudioPlacement* Track::addAudioClip (double start, double length, std::string filePath,
-                                     std::string name, std::vector<float> waveform)
+                                     std::string name, std::vector<float> waveform,
+                                     double durationSeconds, double sourceBpm)
 {
     auto clip = std::make_unique<AudioPlacement>();
     clip->id = nextId++;
     clip->start = start;
     clip->lengthBeats = length;
+    clip->durationSeconds = durationSeconds;
+    clip->sourceBpm = sourceBpm;
     clip->filePath = std::move (filePath);
     clip->name = std::move (name);
     clip->waveform = std::move (waveform);

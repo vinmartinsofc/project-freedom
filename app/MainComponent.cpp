@@ -5,6 +5,32 @@
 #include <set>
 #include <utility>
 
+namespace
+{
+double sourceBpmFromFileName (const juce::File& file, double fallback)
+{
+    const auto name = file.getFileNameWithoutExtension().toLowerCase();
+    const int marker = name.indexOf ("bpm");
+    if (marker <= 0)
+        return fallback;
+
+    int numberEnd = marker;
+    while (numberEnd > 0 && (name[numberEnd - 1] == ' ' || name[numberEnd - 1] == '_' || name[numberEnd - 1] == '-'))
+        --numberEnd;
+    int start = numberEnd;
+    while (start > 0)
+    {
+        const auto character = name[start - 1];
+        if (character < '0' || character > '9')
+            break;
+        --start;
+    }
+
+    const double bpm = name.substring (start, numberEnd).getDoubleValue();
+    return bpm >= 20.0 && bpm <= 300.0 ? bpm : fallback;
+}
+}
+
 class MainComponent::ActionIndicator final : public juce::Component
 {
 public:
@@ -116,6 +142,8 @@ MainComponent::MainComponent()
     audioBrowser.setVisible (false);
     addAndMakeVisible (arrangement);
     addAndMakeVisible (editor);
+    addAndMakeVisible (audioClipEditor);
+    audioClipEditor.setVisible (false);
     addAndMakeVisible (deviceView);
     addAndMakeVisible (clipTab);
     addAndMakeVisible (deviceTab);
@@ -156,12 +184,22 @@ MainComponent::MainComponent()
         b->setColour (juce::TextButton::textColourOnId, juce::Colours::black);
     }
     clipTab.setToggleState (true, juce::dontSendNotification);
-    clipTab.onClick = [this] { showDetail (false); };
+    clipTab.onClick = [this] { audioClipEditorOpen = false; showDetail (false); };
     deviceTab.onClick = [this] { showDetail (true); };
 
     snapButton.setToggleState (true, juce::dontSendNotification);
     highlightButton.setToggleState (true, juce::dontSendNotification);
     previewButton.setToggleState (true, juce::dontSendNotification);
+    audioClipEditor.onClose = [this]
+    {
+        audioClipEditorOpen = false;
+        showDetail (false);
+        resized();
+    };
+    audioClipEditor.onSourceBpmChanged = [this] (double bpm)
+    {
+        return project.setAudioClipSourceBpm (project.selectedTrackId, project.selectedAudioClipId, bpm);
+    };
 
     // botões não roubam o foco do teclado (Espaço continua sendo play/pause)
     for (auto* b : { &scaleButton, &highlightButton, &foldButton, &foldScaleButton, &drawButton, &snapButton, &previewButton,
@@ -231,6 +269,7 @@ MainComponent::MainComponent()
         if (! engine.graph().isPlaying())
         {
             const double g = model.clipStartBeats + local;
+            transportPosition = g;
             engine.graph().seek (g);
             arrangement.setPlayhead (g);
             editor.setPlayhead (local);
@@ -239,6 +278,7 @@ MainComponent::MainComponent()
     editor.onSeek = [this] (double local)
     {
         const double g = model.clipStartBeats + local;
+        transportPosition = g;
         engine.graph().seek (g);
         arrangement.setPlayhead (g);
         editor.setPlayhead (local);
@@ -246,6 +286,7 @@ MainComponent::MainComponent()
 
     arrangement.onSeek = [this] (double g)
     {
+        transportPosition = g;
         engine.graph().seek (g);
         arrangement.setPlayhead (g);
         editor.setPlayhead (g - model.clipStartBeats);
@@ -293,6 +334,11 @@ MainComponent::MainComponent()
         }
         loadAudioFile (file, target->id, beat);
     };
+    arrangement.onAudioClipDoubleClicked = [this] (int trackId, int clipId)
+    {
+        openAudioClipEditor (trackId, clipId);
+    };
+    arrangement.onGridChanged = [this] { refreshAudioClipEditor(); };
     audioBrowser.onPreviewRequested = [this] (const juce::File& file)
     {
         const int request = ++previewLoadToken;
@@ -317,8 +363,16 @@ MainComponent::MainComponent()
         ++previewLoadToken;
         engine.stopAudioPreview();
     };
+    audioBrowser.onPreviewGainChanged = [this] (float gain) { engine.setAudioPreviewGain (gain); };
     transport.onPosition = [this] (double beats)
     {
+        transportPosition = beats;
+        const double bpm = engine.graph().getBpm();
+        if (std::abs (bpm - displayedBpm) > 1.0e-6)
+        {
+            displayedBpm = bpm;
+            refreshAudioClipEditor();
+        }
         arrangement.setPlayhead (beats);
         editor.setPlayhead (beats - model.clipStartBeats);
     };
@@ -427,6 +481,7 @@ void MainComponent::resized()
         clipTab.setBounds ({});
         deviceTab.setBounds ({});
         deviceView.setBounds ({});
+        audioClipEditor.setBounds ({});
         for (auto* c : clipControls) c->setBounds ({});
         return;
     }
@@ -442,6 +497,7 @@ void MainComponent::resized()
     right.removeFromTop (4);
 
     deviceView.setBounds (right);
+    audioClipEditor.setBounds (right);
 
     auto side = right.removeFromLeft (170);
     right.removeFromLeft (8);
@@ -525,8 +581,9 @@ void MainComponent::showDetail (bool devices)
     showingDevices = devices;
     clipTab.setToggleState (! devices, juce::dontSendNotification);
     deviceTab.setToggleState (devices, juce::dontSendNotification);
-    for (auto* c : clipControls) c->setVisible (! devices);
+    for (auto* c : clipControls) c->setVisible (! devices && ! audioClipEditorOpen);
     deviceView.setVisible (devices);
+    audioClipEditor.setVisible (! devices && audioClipEditorOpen);
     if (devices) refreshDeviceView();
 }
 
@@ -609,9 +666,11 @@ void MainComponent::loadAudioFile (const juce::File& file, int trackId, double s
 
         const auto path = file.getFullPathName().toStdString();
         audioAssets[path] = data;
-        const double lengthBeats = data->durationSeconds * engine.graph().getBpm() / 60.0;
+        const double sourceBpm = sourceBpmFromFileName (file, engine.graph().getBpm());
+        const double lengthBeats = data->durationSeconds * sourceBpm / 60.0;
         if (project.addAudioClip (trackId, startBeat, lengthBeats, path,
-                                  file.getFileName().toStdString(), data->waveform) == nullptr)
+                                  file.getFileName().toStdString(), data->waveform,
+                                  data->durationSeconds, sourceBpm) == nullptr)
         {
             publishAudioTrack (trackId);
             audioBrowser.setStatus ("Nao foi possivel inserir o audio nesse ponto da trilha.");
@@ -628,7 +687,7 @@ void MainComponent::publishAudioTrack (int trackId)
     if (const auto* track = project.track (trackId); track != nullptr && track->type == roll::TrackType::Audio)
         for (const auto& clip : track->audioClips)
             if (const auto asset = audioAssets.find (clip->filePath); asset != audioAssets.end())
-                clips.push_back ({ clip->start, clip->lengthBeats, asset->second });
+                clips.push_back ({ clip->start, clip->lengthBeats, clip->sourceBpm, asset->second });
     engine.publishAudioClips (trackId, clips);
 
     std::set<std::string> activePaths;
@@ -678,10 +737,22 @@ void MainComponent::playSelectedTrack()
     }
 
     double start = 0.0, end = 0.0;
-    if (selectedTrackSpan (start, end))
+    const auto* selectedTrack = project.selectedTrack();
+    const auto* selectedAudio = selectedTrack != nullptr && selectedTrack->type == roll::TrackType::Audio
+        ? selectedTrack->findAudioClip (project.selectedAudioClipId) : nullptr;
+    if (selectedAudio != nullptr)
+    {
+        start = selectedAudio->start;
+        end = selectedAudio->end();
+        if (transportPosition >= start && transportPosition < end)
+            start = transportPosition;
+    }
+
+    if (selectedAudio != nullptr || selectedTrackSpan (start, end))
     {
         if (engine.graph().isLoop() && (start < project.loopStart || end > project.loopEnd))
             transport.setLoopEnabled (false);
+        transportPosition = start;
         engine.graph().seek (start);
         arrangement.setPlayhead (start);
         editor.setPlayhead (start - model.clipStartBeats);
@@ -697,7 +768,21 @@ void MainComponent::playSelectedTrack()
 void MainComponent::loopSelectedTrack()
 {
     double start = 0.0, end = 0.0;
-    if (! selectedTrackSpan (start, end))
+    const auto* track = project.selectedTrack();
+    const auto* audio = track != nullptr && track->type == roll::TrackType::Audio
+        ? track->findAudioClip (project.selectedAudioClipId) : nullptr;
+    const auto* midi = project.selectedClip();
+    if (audio != nullptr)
+    {
+        start = audio->start;
+        end = audio->end();
+    }
+    else if (midi != nullptr)
+    {
+        start = midi->start;
+        end = midi->end();
+    }
+    else if (! selectedTrackSpan (start, end))
         return;
 
     project.setLoop (start, end);
@@ -767,6 +852,9 @@ void MainComponent::applyMixers()
 void MainComponent::onSelectionChanged()
 {
     auto* p = project.selectedClip();
+    const auto* selectedTrack = project.selectedTrack();
+    const auto* audio = selectedTrack != nullptr
+        ? selectedTrack->findAudioClip (project.selectedAudioClipId) : nullptr;
     roll::Clip* target = p != nullptr ? &p->clip : nullptr;
     const bool changed = (target != (model.hasClip() ? &model.clip() : nullptr));
 
@@ -777,7 +865,37 @@ void MainComponent::onSelectionChanged()
         lengthBox.setSelectedId (static_cast<int> (std::lround (p->clip.length() / 4.0)), juce::dontSendNotification);
     lengthBox.setEnabled (p != nullptr);
 
+    if (project.selectedAudioClipId < 0)
+        audioClipEditorOpen = false;
+    if (audio != nullptr)
+    {
+        transportPosition = audio->start;
+        engine.graph().seek (transportPosition);
+        arrangement.setPlayhead (transportPosition);
+    }
+    refreshAudioClipEditor();
+    showDetail (showingDevices);
     refreshDeviceView();
+}
+
+void MainComponent::openAudioClipEditor (int trackId, int clipId)
+{
+    project.selectAudioClip (trackId, clipId);
+    audioClipEditorOpen = true;
+    refreshAudioClipEditor();
+    showDetail (false);
+    resized();
+}
+
+void MainComponent::refreshAudioClipEditor()
+{
+    const auto* track = project.selectedTrack();
+    const auto* clip = track != nullptr ? track->findAudioClip (project.selectedAudioClipId) : nullptr;
+    std::shared_ptr<const AudioFileData> source;
+    if (clip != nullptr)
+        if (const auto asset = audioAssets.find (clip->filePath); asset != audioAssets.end())
+            source = asset->second;
+    audioClipEditor.setClip (clip, std::move (source), engine.graph().getBpm(), arrangement.gridBeats());
 }
 
 void MainComponent::refreshDeviceView()
@@ -823,6 +941,7 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster* src)
     }
     else if (src == &project)
     {
+        refreshAudioClipEditor();
         model.clipStartBeats = project.selectedClip() != nullptr ? project.selectedClip()->start : 0.0;
         if (auto* p = project.selectedClip())
             lengthBox.setSelectedId (static_cast<int> (std::lround (p->clip.length() / 4.0)), juce::dontSendNotification);

@@ -10,6 +10,7 @@ public:
     AudioFileBrowser();
     std::function<void (const juce::File&)> onPreviewRequested;
     std::function<void()> onPreviewStopRequested;
+    std::function<void (float)> onPreviewGainChanged;
     void setFavoritesMode (bool);
     void setStatus (const juce::String& text) { status.setText (text, juce::dontSendNotification); }
     void paint (juce::Graphics&) override;
@@ -25,6 +26,7 @@ private:
     class FileTreeItem;
     void populate (FileTreeItem&);
     void selectFile (const juce::File&);
+    void previewFile (const juce::File&);
     void showFavoriteMenu (const juce::File&, juce::Point<int> screenPosition);
     void setFavorite (const juce::File&, int color);
     void removeFavorite (const juce::File&);
@@ -36,6 +38,9 @@ private:
     juce::Label status { {}, "Selecione um arquivo de audio para ouvir" };
     juce::TreeView tree;
     juce::TextButton previewButton { "Ouvir" }, stopButton { "Parar" };
+    juce::ToggleButton autoPreviewButton { "Auto" };
+    juce::Label previewGainLabel { {}, "Volume" };
+    juce::Slider previewGain;
     juce::File selectedFile;
     juce::ApplicationProperties favoriteProperties;
     juce::PropertiesFile* favoriteSettings = nullptr;

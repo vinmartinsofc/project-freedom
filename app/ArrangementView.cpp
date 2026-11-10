@@ -60,6 +60,21 @@ public:
             g.setColour (bar ? theme::border().brighter (0.5f) : theme::border().withAlpha (0.5f));
             g.drawVerticalLine (static_cast<int> (b * ppb), static_cast<float> (cb.getY()), static_cast<float> (cb.getBottom()));
         }
+        const double grid = owner.gridBeats();
+        if (grid < 1.0 && grid * ppb >= 2.0)
+        {
+            const int firstGrid = std::max (0, static_cast<int> (std::floor (cb.getX() / (grid * ppb))));
+            const int lastGrid = static_cast<int> (std::ceil (cb.getRight() / (grid * ppb)));
+            for (int i = firstGrid; i <= lastGrid; ++i)
+            {
+                const double beat = i * grid;
+                if (std::abs (std::remainder (beat, 1.0)) < 1.0e-6)
+                    continue;
+                g.setColour (theme::border().withAlpha (0.25f));
+                g.drawVerticalLine (static_cast<int> (beat * ppb), static_cast<float> (cb.getY()),
+                                    static_cast<float> (cb.getBottom()));
+            }
+        }
 
         // clips
         for (size_t i = 0; i < project.tracks.size(); ++i)
@@ -214,7 +229,7 @@ public:
         repaint();
         const auto trackId = trackIndex >= 0
             ? project.tracks[static_cast<std::size_t> (trackIndex)]->id : -1;
-        const auto beat = std::max (0.0, std::round (details.localPosition.x / owner.ppb));
+        const auto beat = owner.snapBeat (details.localPosition.x / owner.ppb);
         if (audioDrop)
         {
             const juce::File file (description.substring (6));
@@ -260,7 +275,7 @@ public:
         const int trackId = trackIndex >= 0
             ? project.tracks[static_cast<std::size_t> (trackIndex)]->id : -1;
         if (owner.canAcceptAudioDrop && owner.canAcceptAudioDrop (file, trackId) && owner.onAudioDropped)
-            owner.onAudioDropped (file, trackId, std::max (0.0, std::round (static_cast<double> (x) / owner.ppb)));
+            owner.onAudioDropped (file, trackId, owner.snapBeat (static_cast<double> (x) / owner.ppb));
         dragTrackIndex = -1;
         dragDropAllowed = false;
         dragDropIsAudio = false;
@@ -313,6 +328,7 @@ public:
         if (h.audioClip != nullptr)
         {
             project.selectAudioClip (trackId, h.audioClip->id);
+            if (owner.onSeek) owner.onSeek (h.audioClip->start);
             curTrack = trackId; curClip = -1; curAudioClipId = h.audioClip->id;
             origTrack = trackId; origStart = h.audioClip->start; origLen = h.audioClip->lengthBeats;
         }
@@ -346,7 +362,8 @@ public:
         if (mode == Mode::Move)
         {
             double newStart = origStart + (beat - downBeat);
-            newStart = std::max (0.0, noSnap ? newStart : std::round (newStart));
+            newStart = std::max (0.0, noSnap ? newStart
+                                              : curAudioClipId >= 0 ? owner.snapBeat (newStart) : std::round (newStart));
 
             const int ti = std::clamp (static_cast<int> (std::floor (e.position.y / trackHeight)), 0, static_cast<int> (project.tracks.size()) - 1);
             const int toTrack = project.tracks[static_cast<size_t> (ti)]->id;
@@ -395,8 +412,8 @@ public:
         {
             if (curAudioClipId >= 0)
             {
-                const double newLen = std::max (1.0 / 16.0, noSnap ? origLen + (beat - downBeat)
-                                                                   : std::round (origLen + (beat - downBeat)));
+                const double newLen = std::max (owner.gridBeats(), noSnap ? origLen + (beat - downBeat)
+                                                                          : owner.snapBeat (origLen + (beat - downBeat)));
                 if (auto* track = project.track (curTrack))
                     if (auto* clip = track->findAudioClip (curAudioClipId);
                         clip != nullptr && std::abs (newLen - clip->lengthBeats) > 1.0e-9)
@@ -432,7 +449,15 @@ public:
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
         const auto h = hit (e.position);
-        if (h.trackIndex < 0 || h.clip != nullptr || h.audioClip != nullptr) return;
+        if (h.audioClip != nullptr)
+        {
+            const int trackId = project.tracks[static_cast<size_t> (h.trackIndex)]->id;
+            project.selectAudioClip (trackId, h.audioClip->id);
+            if (owner.onAudioClipDoubleClicked)
+                owner.onAudioClipDoubleClicked (trackId, h.audioClip->id);
+            return;
+        }
+        if (h.trackIndex < 0 || h.clip != nullptr) return;
         const int trackId = project.tracks[static_cast<size_t> (h.trackIndex)]->id;
         const double start = std::floor ((e.position.x / owner.ppb) / 4.0) * 4.0;
         if (project.tracks[static_cast<size_t> (h.trackIndex)]->type == roll::TrackType::Midi)
@@ -513,7 +538,7 @@ private:
         const int target = trackIndexAt (details.localPosition.y);
         dragDropIsAudio = description.startsWith ("audio:");
         dragTrackIndex = target;
-        dragBeat = std::max (0.0, std::round (details.localPosition.x / owner.ppb));
+        dragBeat = owner.snapBeat (details.localPosition.x / owner.ppb);
         dragDropAllowed = false;
         const int trackId = target >= 0
             ? project.tracks[static_cast<std::size_t> (target)]->id : -1;
@@ -539,7 +564,7 @@ private:
     {
         dragDropIsAudio = true;
         dragTrackIndex = trackIndexAt (y);
-        dragBeat = std::max (0.0, std::round (static_cast<double> (x) / owner.ppb));
+        dragBeat = owner.snapBeat (static_cast<double> (x) / owner.ppb);
         dragDropAllowed = false;
         if (files.size() == 1 && owner.canAcceptAudioDrop)
         {
@@ -955,6 +980,7 @@ ArrangementView::ArrangementView (ProjectModel& p) : project (p)
     addAndMakeVisible (rulerHolder);
     addAndMakeVisible (addTrackButton);
     addAndMakeVisible (addAudioTrackButton);
+    addAndMakeVisible (gridBox);
     rulerHolder.addAndMakeVisible (*ruler);
 
     viewport.setViewedComponent (lanes.get(), false);
@@ -962,8 +988,26 @@ ArrangementView::ArrangementView (ProjectModel& p) : project (p)
 
     addTrackButton.setMouseClickGrabsKeyboardFocus (false);
     addAudioTrackButton.setMouseClickGrabsKeyboardFocus (false);
+    gridBox.setMouseClickGrabsKeyboardFocus (false);
     addTrackButton.onClick = [this] { project.addTrack(); };
     addAudioTrackButton.onClick = [this] { project.addTrack (roll::TrackType::Audio); };
+    gridBox.addItem ("1/4", 1);
+    gridBox.addItem ("1/8", 2);
+    gridBox.addItem ("1/16", 3);
+    gridBox.addItem ("1/32", 4);
+    gridBox.addItem ("1 compasso", 5);
+    gridBox.setSelectedId (3, juce::dontSendNotification);
+    gridBox.onChange = [this]
+    {
+        static constexpr double values[] = { 1.0, 0.5, 0.25, 0.125, 4.0 };
+        const int id = gridBox.getSelectedId();
+        if (id >= 1 && id <= 5)
+        {
+            gridBeat = values[id - 1];
+            lanes->repaint();
+            if (onGridChanged) onGridChanged();
+        }
+    };
 
     project.addChangeListener (this);
     refresh();
@@ -985,6 +1029,11 @@ void ArrangementView::zoom (double factor)
     updateSizes();
     lanes->repaint();
     ruler->repaint();
+}
+
+double ArrangementView::snapBeat (double beat) const
+{
+    return std::max (0.0, std::round (beat / gridBeat) * gridBeat);
 }
 
 void ArrangementView::setPlayhead (double beats)
@@ -1068,9 +1117,11 @@ void ArrangementView::resized()
     auto area = getLocalBounds();
     auto top = area.removeFromTop (rulerHeight);
     auto addTrackArea = top.removeFromLeft (headerWidth).reduced (4);
-    addTrackButton.setBounds (addTrackArea.removeFromLeft (addTrackArea.getWidth() / 2 - 2));
-    addTrackArea.removeFromLeft (4);
-    addAudioTrackButton.setBounds (addTrackArea);
+    addTrackButton.setBounds (addTrackArea.removeFromLeft (56));
+    addTrackArea.removeFromLeft (3);
+    addAudioTrackButton.setBounds (addTrackArea.removeFromLeft (64));
+    addTrackArea.removeFromLeft (3);
+    gridBox.setBounds (addTrackArea);
     rulerHolder.setBounds (top);
     auto left = area.removeFromLeft (headerWidth);
     viewport.setBounds (area);

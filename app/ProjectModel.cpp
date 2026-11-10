@@ -103,14 +103,16 @@ roll::Placement* ProjectModel::addClip (int trackId, double start, double length
 
 roll::AudioPlacement* ProjectModel::addAudioClip (int trackId, double start, double length,
                                                    const std::string& filePath, const std::string& name,
-                                                   const std::vector<float>& waveform)
+                                                   const std::vector<float>& waveform,
+                                                   double durationSeconds, double sourceBpm)
 {
     auto* t = track (trackId);
     if (t == nullptr || t->type != roll::TrackType::Audio || start < 0.0 || length <= 0.0
-        || filePath.empty() || ! t->isAudioFree (start, length))
+        || filePath.empty() || durationSeconds < 0.0 || sourceBpm < 20.0 || sourceBpm > 300.0
+        || ! t->isAudioFree (start, length))
         return nullptr;
 
-    auto* clip = t->addAudioClip (start, length, filePath, name, waveform);
+    auto* clip = t->addAudioClip (start, length, filePath, name, waveform, durationSeconds, sourceBpm);
     growTo (clip->end() + 64.0);
     selectAudioClip (trackId, clip->id);
     if (onAudioClipsChanged) onAudioClipsChanged (trackId);
@@ -154,6 +156,26 @@ bool ProjectModel::resizeAudioClip (int trackId, int clipId, double length)
         || ! t->isAudioFree (clip->start, length, clipId))
         return false;
     clip->lengthBeats = length;
+    growTo (clip->end() + 64.0);
+    if (onAudioClipsChanged) onAudioClipsChanged (trackId);
+    sendChangeMessage();
+    return true;
+}
+
+bool ProjectModel::setAudioClipSourceBpm (int trackId, int clipId, double sourceBpm)
+{
+    auto* t = track (trackId);
+    auto* clip = t != nullptr ? t->findAudioClip (clipId) : nullptr;
+    if (t == nullptr || t->type != roll::TrackType::Audio || clip == nullptr
+        || sourceBpm < 20.0 || sourceBpm > 300.0 || clip->durationSeconds <= 0.0)
+        return false;
+
+    const double newLength = clip->durationSeconds * sourceBpm / 60.0;
+    if (! t->isAudioFree (clip->start, newLength, clipId))
+        return false;
+
+    clip->sourceBpm = sourceBpm;
+    clip->lengthBeats = newLength;
     growTo (clip->end() + 64.0);
     if (onAudioClipsChanged) onAudioClipsChanged (trackId);
     sendChangeMessage();

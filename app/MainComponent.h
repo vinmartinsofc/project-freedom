@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "AudioEngine.h"
+#include "AudioClipEditor.h"
 #include "AudioFileBrowser.h"
 #include "ArrangementView.h"
 #include "BrowserPanel.h"
@@ -38,6 +39,8 @@ private:
     void setFavoritesVisible (bool);
     void setPianoRollVisible (bool);
     void loadAudioFile (const juce::File&, int trackId, double startBeat);
+    void openAudioClipEditor (int trackId, int clipId);
+    void refreshAudioClipEditor();
     void publishAudioTrack (int trackId);
     bool selectedTrackSpan (double& start, double& end) const;
     void playSelectedTrack();
@@ -64,6 +67,7 @@ private:
     AudioFileBrowser audioBrowser;
     ArrangementView arrangement { project };
     PianoRollEditor editor { model };
+    AudioClipEditor audioClipEditor;
     DeviceView deviceView;
 
     // painel do clip
@@ -89,8 +93,11 @@ private:
     juce::String scanMessage;
 
     bool showingDevices = false;
+    bool audioClipEditorOpen = false;
     bool pianoRollVisible = true;
     double arrangementRatio = 0.42;
+    double transportPosition = 0.0;
+    double displayedBpm = 120.0;
     juce::Rectangle<int> splitterRect;
     int rightTop = 0, rightHeight = 1;
     bool draggingSplitter = false, draggingBrowserSplitter = false;

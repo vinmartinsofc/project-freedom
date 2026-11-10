@@ -2,6 +2,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "Arrangement.h"
 #include "Sequencer.h"
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <map>
@@ -142,6 +143,7 @@ struct AudioClipPlayback
 {
     double startBeat = 0.0;
     double lengthBeats = 0.0;
+    double sourceBpm = 120.0;
     std::shared_ptr<const AudioFileData> source;
 };
 
@@ -180,6 +182,7 @@ public:
     AudioPreviewSource();
     void play (std::shared_ptr<const AudioFileData>);
     void stop();
+    void setGain (float gain) { targetGain.store (std::clamp (gain, 0.0f, 1.0f)); }
     const juce::String getName() const override { return "Audio Preview"; }
     void prepareToPlay (double, int) override {}
     void releaseResources() override {}
@@ -203,6 +206,8 @@ private:
     std::shared_ptr<const AudioFileData> pendingSource, localSource;
     std::uint64_t pendingVersion = 0, localVersion = 0;
     std::atomic<bool> playing { false };
+    std::atomic<float> targetGain { 0.5f };
+    float currentGain = 0.5f;
     double positionSamples = 0.0;
 };
 
@@ -230,6 +235,7 @@ public:
     void loadAudioFileAsync (const juce::File&, std::function<void (const juce::String&, std::shared_ptr<const AudioFileData>)>);
     void previewAudio (std::shared_ptr<const AudioFileData> source);
     void stopAudioPreview();
+    void setAudioPreviewGain (float gain);
     bool canAcceptPlugin (int trackId, const juce::PluginDescription&) const;
     void removeDevice (int trackId, int deviceId);
     void setDeviceBypassed (int trackId, int deviceId, bool bypassed);

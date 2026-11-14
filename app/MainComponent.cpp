@@ -377,6 +377,7 @@ MainComponent::MainComponent()
         editor.setPlayhead (beats - model.clipStartBeats);
     };
     transport.onLoopToggled = [this] (bool on) { arrangement.setLoopEnabled (on); };
+    arrangement.onLoopToggleRequested = [this] (bool on) { transport.setLoopEnabled (on); };
     transport.onBrowserToggled = [this] (bool visible) { setBrowserVisible (visible); };
     transport.onFileBrowserToggled = [this] (bool visible) { setAudioBrowserVisible (visible); };
     transport.onFavoritesToggled = [this] (bool visible) { setFavoritesVisible (visible); };
@@ -413,7 +414,12 @@ MainComponent::MainComponent()
     };
 
     engine.graph().setLoopRegion (project.loopStart, project.loopEnd);
-    project.addTrack();
+    if (project.tracks.empty())
+    {
+        auto* midiTrack = project.addTrack();
+        project.addTrack (roll::TrackType::Audio);
+        project.selectTrack (midiTrack->id);
+    }
     onSelectionChanged();
     changeListenerCallback (&model);
     showDetail (false);
@@ -813,11 +819,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
         return true;
     }
     if (k == juce::KeyPress (juce::KeyPress::F6Key)) { cycleFocus(); return true; }
-    if (k.getModifiers().isCtrlDown() && k.getModifiers().isShiftDown()
-        && juce::CharacterFunctions::toUpperCase (static_cast<juce::juce_wchar> (k.getKeyCode())) == 'T')
+    if (k.getModifiers().isCtrlDown() && k.getModifiers().isShiftDown())
     {
-        project.addTrack();
-        return true;
+        const auto key = juce::CharacterFunctions::toUpperCase (static_cast<juce::juce_wchar> (k.getKeyCode()));
+        if (key == 'T')
+        {
+            project.addTrack();
+            return true;
+        }
+        if (key == 'A')
+        {
+            project.addTrack (roll::TrackType::Audio);
+            return true;
+        }
     }
     return false;
 }
@@ -837,8 +851,9 @@ juce::String MainComponent::deviceSummary (int trackId) const
     juce::StringArray names;
     for (const auto& d : engine.devices (trackId)) names.add (d.name);
     const auto summary = names.joinIntoString (" > ");
+    if (trackId == 0) return summary.isNotEmpty() ? summary : theme::ui ("Efeitos Master");
     const auto* track = project.track (trackId);
-    return summary.isNotEmpty() ? summary : (track != nullptr && track->type == roll::TrackType::Audio ? "Canal de audio" : juce::String());
+    return summary.isNotEmpty() ? summary : (track != nullptr && track->type == roll::TrackType::Audio ? theme::ui ("Canal de audio") : juce::String());
 }
 
 void MainComponent::applyMixers()
@@ -846,7 +861,12 @@ void MainComponent::applyMixers()
     bool anySolo = false;
     for (const auto& t : project.tracks) anySolo |= t->solo;
     for (const auto& t : project.tracks)
+    {
+        engine.setTrackRouting (t->id, t->outputRouting);
         engine.setMixer (t->id, static_cast<float> (t->volume), static_cast<float> (t->pan), t->mute || (anySolo && ! t->solo));
+    }
+    if (auto* m = project.masterTrack.get())
+        engine.setMasterMixer (static_cast<float> (m->volume), static_cast<float> (m->pan), m->mute);
 }
 
 void MainComponent::onSelectionChanged()
@@ -970,7 +990,8 @@ void MainComponent::loadDevice (const juce::PluginDescription& desc)
     const int trackId = t->id;
     if (! engine.canAcceptPlugin (trackId, desc))
     {
-        browser.setStatus ("Canais de audio aceitam apenas efeitos.");
+        browser.setStatus (trackId == 0 ? theme::ui ("A trilha Master aceita apenas efeitos.")
+                                        : theme::ui ("Canais de audio aceitam apenas efeitos."));
         return;
     }
 

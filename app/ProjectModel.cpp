@@ -2,14 +2,25 @@
 #include <algorithm>
 #include <cmath>
 
+ProjectModel::ProjectModel()
+{
+    masterTrack = std::make_unique<roll::Track>();
+    masterTrack->id = 0;
+    masterTrack->name = "Master";
+    masterTrack->volume = 1.0;
+    masterTrack->pan = 0.0;
+}
+
 roll::Track* ProjectModel::track (int id) const
 {
+    if (id == 0) return masterTrack.get();
     for (const auto& t : tracks) if (t->id == id) return t.get();
     return nullptr;
 }
 
 int ProjectModel::trackIndex (int id) const
 {
+    if (id == 0) return -1;
     for (size_t i = 0; i < tracks.size(); ++i) if (tracks[i]->id == id) return static_cast<int> (i);
     return -1;
 }
@@ -88,6 +99,18 @@ void ProjectModel::selectAudioClip (int trackId, int clipId)
     selectedAudioClipId = clipId;
     if (onSelectionChanged) onSelectionChanged();
     sendChangeMessage();
+}
+
+void ProjectModel::setTrackRouting (int trackId, roll::TrackOutputRouting routing)
+{
+    if (auto* t = track (trackId))
+    {
+        if (t->outputRouting != routing)
+        {
+            t->outputRouting = routing;
+            notifyMixer();
+        }
+    }
 }
 
 roll::Placement* ProjectModel::addClip (int trackId, double start, double length)
@@ -267,7 +290,7 @@ void ProjectModel::notifyTrackNotes (int trackId)
 void ProjectModel::setLoop (double s, double e)
 {
     loopStart = std::max (0.0, s);
-    loopEnd = std::max (loopStart + 1.0, e);
+    loopEnd = std::max (loopStart + 1.0 / 64.0, e);
     if (onLoopChanged) onLoopChanged();
     sendChangeMessage();
 }

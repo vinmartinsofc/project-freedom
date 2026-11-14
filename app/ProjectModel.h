@@ -10,6 +10,10 @@
 class ProjectModel : public juce::ChangeBroadcaster
 {
 public:
+    ProjectModel();
+    ~ProjectModel() override = default;
+
+    std::unique_ptr<roll::Track> masterTrack;
     std::vector<std::unique_ptr<roll::Track>> tracks;
     int selectedTrackId = -1, selectedClipId = -1, selectedAudioClipId = -1;
     double loopStart = 0.0, loopEnd = 16.0;
@@ -45,6 +49,7 @@ public:
     int  moveClip (int fromTrack, int clipId, int toTrack, double newStart);
     int  moveAudioClip (int fromTrack, int clipId, int toTrack, double newStart);
     void selectAudioClip (int trackId, int clipId);
+    void setTrackRouting (int trackId, roll::TrackOutputRouting routing);
     void notifyTrackNotes (int trackId);
     void notifyMixer()   { if (onMixerChanged) onMixerChanged(); sendChangeMessage(); }
     void setLoop (double s, double e);

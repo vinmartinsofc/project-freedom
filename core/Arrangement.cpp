@@ -1,5 +1,6 @@
 #include "Arrangement.h"
 #include <algorithm>
+#include <cmath>
 
 namespace roll
 {
@@ -124,5 +125,19 @@ std::vector<Note> flatten (const Track& track)
             out.push_back (a);
         }
     return out;
+}
+
+float gainToDecibels (float gain, float minusInfinityDb)
+{
+    if (gain <= 0.00001f)
+        return minusInfinityDb;
+    return std::max (minusInfinityDb, 20.0f * std::log10 (gain));
+}
+
+float decibelsToGain (float decibels)
+{
+    if (decibels <= -59.9f)
+        return 0.0f;
+    return std::pow (10.0f, decibels / 20.0f);
 }
 } // namespace roll

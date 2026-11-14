@@ -88,8 +88,14 @@ void DeviceView::paint (juce::Graphics& g)
     g.setColour (theme::textDim());
     g.setFont (juce::FontOptions (12.0f));
     if (boxes.empty())
-        g.drawFittedText (theme::ui ("Trilha \"") + trackName + theme::ui ("\" sem dispositivos.\nDe duplo clique em um plugin da lista para adicionar.\n(O instrumento vai primeiro; efeitos entram em sequencia.)"),
-                          getLocalBounds().reduced (20), juce::Justification::centred, 4);
+    {
+        if (trackId == 0)
+            g.drawFittedText (theme::ui ("Trilha Master sem efeitos.\nDe duplo clique em um plugin da lista para adicionar efeitos de masterizacao.\n(A trilha Master aceita apenas efeitos.)"),
+                              getLocalBounds().reduced (20), juce::Justification::centred, 4);
+        else
+            g.drawFittedText (theme::ui ("Trilha \"") + trackName + theme::ui ("\" sem dispositivos.\nDe duplo clique em um plugin da lista para adicionar.\n(O instrumento vai primeiro; efeitos entram em sequencia.)"),
+                              getLocalBounds().reduced (20), juce::Justification::centred, 4);
+    }
 }
 
 void DeviceView::resized()

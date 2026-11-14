@@ -138,6 +138,7 @@ void TrackAudioSource::publishClips (const std::vector<AudioClipPlayback>& clips
 {
     const juce::SpinLock::ScopedLockType lock (clipsLock);
     pendingClips = clips;
+    ++pendingVersion;
 }
 
 void TrackAudioSource::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -148,14 +149,16 @@ void TrackAudioSource::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
     {
         const juce::SpinLock::ScopedTryLockType lock (clipsLock);
-        if (lock.isLocked())
+        if (lock.isLocked() && pendingVersion != localVersion)
+        {
             std::swap (localClips, pendingClips);
+            localVersion = pendingVersion;
+        }
     }
 
     const double outputRate = getSampleRate();
     if (outputRate <= 0.0)
         return;
-    const double bpm = shared.plan.beatsPerSample * outputRate * 60.0;
 
     for (int segmentIndex = 0; segmentIndex < shared.plan.count; ++segmentIndex)
     {
@@ -175,9 +178,11 @@ void TrackAudioSource::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
                 continue;
 
             const auto& source = *clip.source->samples;
-            const double sourceBpm = std::max (20.0, clip.sourceBpm);
-            const double sourceStep = clip.source->sampleRate / outputRate * bpm / sourceBpm;
-            const double sourceStart = (activeStart - clip.startBeat) * 60.0 / sourceBpm * clip.source->sampleRate;
+            // Reproduz na velocidade original do arquivo (sem time-stretch),
+            // identico ao comportamento do AudioPreviewSource.
+            const double sourceStep = clip.source->sampleRate / outputRate;
+            const double sourceStart = (activeStart - clip.startBeat)
+                                       / shared.plan.beatsPerSample * sourceStep;
             const int outputStart = segment.offset + static_cast<int> (std::lround ((activeStart - segment.a) / shared.plan.beatsPerSample));
             const int outputEnd = std::min (buffer.getNumSamples(),
                                             segment.offset + segment.samples);
@@ -339,6 +344,35 @@ void SequencerGraph::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     juce::AudioProcessorGraph::processBlock (buffer, midi);
 }
 
+// ======================================================= PassThroughProcessor (Master Bus In)
+
+class PassThroughProcessor : public juce::AudioProcessor
+{
+public:
+    PassThroughProcessor()
+        : juce::AudioProcessor (BusesProperties()
+                                    .withInput  ("In",  juce::AudioChannelSet::stereo(), true)
+                                    .withOutput ("Out", juce::AudioChannelSet::stereo(), true)) {}
+
+    const juce::String getName() const override { return "Master Bus In"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override {}
+    using juce::AudioProcessor::processBlock;
+    bool acceptsMidi() const override  { return false; }
+    bool producesMidi() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+};
+
 // ======================================================= AudioEngine
 
 AudioEngine::AudioEngine()
@@ -354,6 +388,18 @@ AudioEngine::AudioEngine()
     previewNode = seqGraph.addNode (std::move (previewSource));
     for (int channel = 0; channel < 2; ++channel)
         seqGraph.addConnection ({ { previewNode->nodeID, channel }, { outputNode->nodeID, channel } });
+
+    // Trilha Master fixa (ID 0)
+    TrackNodes master;
+    master.audioTrack = true;
+    master.isMaster = true;
+    auto busIn = std::make_unique<PassThroughProcessor>();
+    master.source = seqGraph.addNode (std::move (busIn));
+    auto mix = std::make_unique<TrackMixer>();
+    master.mixerPtr = mix.get();
+    master.mixer = seqGraph.addNode (std::move (mix));
+    tracks[masterTrackId] = std::move (master);
+    rewireMaster();
 
     deviceManager.initialiseWithDefaultDevices (0, 2);
     player.setProcessor (&seqGraph);
@@ -410,6 +456,7 @@ void AudioEngine::addTrack (int trackId, roll::TrackType type)
 
 void AudioEngine::removeTrack (int trackId)
 {
+    if (trackId == masterTrackId) return;
     auto* t = find (trackId);
     if (t == nullptr) return;
 
@@ -426,9 +473,68 @@ void AudioEngine::clearConnectionsOf (juce::AudioProcessorGraph::NodeID id)
             seqGraph.removeConnection (c);
 }
 
-// Cadeia: MIDI -> instrumento -> efeitos ou áudio -> efeitos -> mixer -> saída
+void AudioEngine::clearOutputConnectionsOf (juce::AudioProcessorGraph::NodeID id)
+{
+    for (const auto& c : seqGraph.getConnections())
+        if (c.source.nodeID == id)
+            seqGraph.removeConnection (c);
+}
+
+void AudioEngine::rewireMaster()
+{
+    auto* m = find (masterTrackId);
+    if (m == nullptr) return;
+
+    clearOutputConnectionsOf (m->source->nodeID);
+    clearConnectionsOf (m->mixer->nodeID);
+    for (auto& d : m->devices) clearConnectionsOf (d.node->nodeID);
+
+    for (int ch = 0; ch < 2; ++ch)
+        seqGraph.addConnection ({ { m->mixer->nodeID, ch }, { outputNode->nodeID, ch } });
+
+    if (m->devices.empty())
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            seqGraph.addConnection ({ { m->source->nodeID, ch }, { m->mixer->nodeID, ch } });
+        return;
+    }
+
+    for (size_t i = 0; i < m->devices.size(); ++i)
+    {
+        auto* proc = m->devices[i].node->getProcessor();
+        const int inputs = proc->getTotalNumInputChannels();
+        if (i == 0)
+        {
+            for (int ch = 0; ch < 2 && inputs > 0; ++ch)
+                seqGraph.addConnection ({ { m->source->nodeID, ch }, { m->devices[i].node->nodeID, std::min (ch, inputs - 1) } });
+        }
+        else if (inputs > 0)
+        {
+            auto* previous = m->devices[i - 1].node->getProcessor();
+            const int outputs = std::max (1, previous->getTotalNumOutputChannels());
+            for (int ch = 0; ch < 2; ++ch)
+                seqGraph.addConnection ({ { m->devices[i - 1].node->nodeID, std::min (ch, outputs - 1) },
+                                          { m->devices[i].node->nodeID, std::min (ch, inputs - 1) } });
+        }
+
+        if (i + 1 == m->devices.size())
+        {
+            const int outputs = std::max (1, proc->getTotalNumOutputChannels());
+            for (int ch = 0; ch < 2; ++ch)
+                seqGraph.addConnection ({ { m->devices[i].node->nodeID, std::min (ch, outputs - 1) }, { m->mixer->nodeID, ch } });
+        }
+    }
+}
+
+// Cadeia: MIDI -> instrumento -> efeitos ou áudio -> efeitos -> mixer -> Master / Ext. Out
 void AudioEngine::rewire (TrackNodes& t)
 {
+    if (t.isMaster)
+    {
+        rewireMaster();
+        return;
+    }
+
     clearConnectionsOf (t.source->nodeID);
     clearConnectionsOf (t.mixer->nodeID);
     for (auto& d : t.devices) clearConnectionsOf (d.node->nodeID);
@@ -436,8 +542,13 @@ void AudioEngine::rewire (TrackNodes& t)
     using AG = juce::AudioProcessorGraph;
     const int midi = AG::midiChannelIndex;
 
+    auto* master = find (masterTrackId);
+    auto destNode = (t.routing == roll::TrackOutputRouting::ExtOut || master == nullptr)
+                        ? outputNode
+                        : master->source;
+
     for (int ch = 0; ch < 2; ++ch)
-        seqGraph.addConnection ({ { t.mixer->nodeID, ch }, { outputNode->nodeID, ch } });
+        seqGraph.addConnection ({ { t.mixer->nodeID, ch }, { destNode->nodeID, ch } });
 
     if (t.audioTrack)
     {
@@ -536,6 +647,28 @@ float AudioEngine::peak (int trackId) const
     return t != nullptr ? t->mixerPtr->peak() : 0.0f;
 }
 
+float AudioEngine::masterPeak() const
+{
+    return peak (masterTrackId);
+}
+
+void AudioEngine::setTrackRouting (int trackId, roll::TrackOutputRouting routing)
+{
+    if (auto* t = find (trackId))
+    {
+        if (t->routing != routing)
+        {
+            t->routing = routing;
+            rewire (*t);
+        }
+    }
+}
+
+void AudioEngine::setMasterMixer (float gain, float pan, bool muted)
+{
+    setMixer (masterTrackId, gain, pan, muted);
+}
+
 void AudioEngine::loadAudioFileAsync (
     const juce::File& file,
     std::function<void (const juce::String&, std::shared_ptr<const AudioFileData>)> callback)
@@ -564,13 +697,16 @@ void AudioEngine::setAudioPreviewGain (float gain)
 bool AudioEngine::canAcceptPlugin (int trackId, const juce::PluginDescription& description) const
 {
     const auto* t = find (trackId);
-    return t != nullptr && (! t->audioTrack || ! description.isInstrument);
+    if (t == nullptr) return false;
+    if (t->isMaster) return ! description.isInstrument;
+    return ! t->audioTrack || ! description.isInstrument;
 }
 
 void AudioEngine::addDevice (int trackId, const juce::PluginDescription& desc, std::function<void (const juce::String&, int)> onDone)
 {
     auto* track = find (trackId);
     if (track == nullptr) { onDone ("Trilha inexistente.", 0); return; }
+    if (track->isMaster && desc.isInstrument) { onDone ("A trilha Master aceita apenas efeitos.", 0); return; }
     if (track->audioTrack && desc.isInstrument) { onDone ("Canais de audio aceitam apenas efeitos.", 0); return; }
 
     const auto pluginIdentifier = desc.createIdentifierString();

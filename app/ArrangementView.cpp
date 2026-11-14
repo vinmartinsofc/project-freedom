@@ -17,8 +17,8 @@ public:
 
     void updateSize()
     {
-        setSize (std::max (1, static_cast<int> (project.totalBeats * owner.ppb)),
-                 std::max (1, static_cast<int> (project.tracks.size()) * trackHeight));
+        setSize (std::max (1, static_cast<int> (project.totalBeats * owner.pixelsPerBeat)),
+                 std::max (1, static_cast<int> (project.tracks.size() + 1) * trackHeight));
     }
 
     void focusGained (FocusChangeType) override { owner.repaint(); }
@@ -26,21 +26,33 @@ public:
 
     void setPlayhead (double beats)
     {
-        const int oldX = static_cast<int> (owner.playhead * owner.ppb);
+        const int oldX = static_cast<int> (owner.playhead * owner.pixelsPerBeat);
         owner.playhead = beats;
         repaint (oldX - 2, 0, 5, getHeight());
-        repaint (static_cast<int> (beats * owner.ppb) - 2, 0, 5, getHeight());
+        repaint (static_cast<int> (beats * owner.pixelsPerBeat) - 2, 0, 5, getHeight());
     }
 
     void paint (juce::Graphics& g) override
     {
         const auto cb = g.getClipBounds();
-        const double ppb = owner.ppb;
+        const double ppb = owner.pixelsPerBeat;
 
-        for (size_t i = 0; i < project.tracks.size(); ++i)
+        const size_t totalRows = project.tracks.size() + 1;
+        for (size_t i = 0; i < totalRows; ++i)
         {
-            g.setColour ((i % 2 == 0) ? theme::rowWhite() : theme::rowBlack());
-            g.fillRect (cb.getX(), static_cast<int> (i) * trackHeight, cb.getWidth(), trackHeight);
+            if (i == project.tracks.size())
+            {
+                g.setColour (theme::panel().darker (0.2f));
+                g.fillRect (cb.getX(), static_cast<int> (i) * trackHeight, cb.getWidth(), trackHeight);
+                g.setColour (theme::textDim().withAlpha (0.45f));
+                g.setFont (juce::FontOptions (11.0f));
+                g.drawText (theme::ui ("Master Bus  (Saida Estereo 1/2)"), cb.getX() + 12, static_cast<int> (i) * trackHeight + 4, 300, 20, juce::Justification::centredLeft);
+            }
+            else
+            {
+                g.setColour ((i % 2 == 0) ? theme::rowWhite() : theme::rowBlack());
+                g.fillRect (cb.getX(), static_cast<int> (i) * trackHeight, cb.getWidth(), trackHeight);
+            }
             g.setColour (theme::border());
             g.drawHorizontalLine ((static_cast<int> (i) + 1) * trackHeight - 1, static_cast<float> (cb.getX()), static_cast<float> (cb.getRight()));
         }
@@ -101,9 +113,14 @@ public:
                     g.drawText (clip->name, r.toNearestInt().withTrimmedLeft (5).withHeight (14),
                                 juce::Justification::centredLeft, true);
 
-                    g.setColour (juce::Colours::black.withAlpha (0.75f));
+                    const auto waveformArea = r.withY (r.getY() + 15.0f).withHeight (r.getHeight() - 15.0f);
+                    g.setColour (juce::Colours::black.withAlpha (0.3f));
+                    g.fillRect (waveformArea);
                     const float center = r.getY() + 42.0f;
                     const float halfHeight = 24.0f;
+                    g.setColour (juce::Colours::white.withAlpha (0.24f));
+                    g.drawHorizontalLine (static_cast<int> (center), waveformArea.getX(), waveformArea.getRight());
+                    g.setColour (base.brighter (0.7f).withAlpha (0.9f));
                     for (size_t bin = 0; bin < clip->waveform.size(); ++bin)
                     {
                         const float x = r.getX() + static_cast<float> (bin) / static_cast<float> (clip->waveform.size())
@@ -229,7 +246,7 @@ public:
         repaint();
         const auto trackId = trackIndex >= 0
             ? project.tracks[static_cast<std::size_t> (trackIndex)]->id : -1;
-        const auto beat = owner.snapBeat (details.localPosition.x / owner.ppb);
+        const auto beat = owner.snapBeat (details.localPosition.x / owner.pixelsPerBeat);
         if (audioDrop)
         {
             const juce::File file (description.substring (6));
@@ -275,7 +292,7 @@ public:
         const int trackId = trackIndex >= 0
             ? project.tracks[static_cast<std::size_t> (trackIndex)]->id : -1;
         if (owner.canAcceptAudioDrop && owner.canAcceptAudioDrop (file, trackId) && owner.onAudioDropped)
-            owner.onAudioDropped (file, trackId, owner.snapBeat (static_cast<double> (x) / owner.ppb));
+            owner.onAudioDropped (file, trackId, owner.snapBeat (static_cast<double> (x) / owner.pixelsPerBeat));
         dragTrackIndex = -1;
         dragDropAllowed = false;
         dragDropIsAudio = false;
@@ -296,7 +313,7 @@ public:
         h.trackIndex = static_cast<int> (std::floor (p.y / trackHeight));
         if (h.trackIndex < 0 || h.trackIndex >= static_cast<int> (project.tracks.size())) { h.trackIndex = -1; return h; }
         const auto* track = project.tracks[static_cast<size_t> (h.trackIndex)].get();
-        const double beat = p.x / owner.ppb;
+        const double beat = p.x / owner.pixelsPerBeat;
         if (track->type == roll::TrackType::Audio)
         {
             for (const auto& clip : track->audioClips)
@@ -315,9 +332,29 @@ public:
         grabKeyboardFocus();
         mode = Mode::None; changed = false; copied = false;
 
+        const int row = static_cast<int> (std::floor (e.position.y / trackHeight));
+        if (row == static_cast<int> (project.tracks.size()))
+        {
+            project.selectTrack (0);
+            return;
+        }
+
         const auto h = hit (e.position);
         if (h.trackIndex < 0) return;
         const int trackId = project.tracks[static_cast<size_t> (h.trackIndex)]->id;
+
+        if (e.mods.isPopupMenu())
+        {
+            if (h.audioClip != nullptr)
+                project.selectAudioClip (trackId, h.audioClip->id);
+            else if (h.clip != nullptr)
+                project.selectClip (trackId, h.clip->id);
+            else
+                project.selectClip (trackId, -1);
+
+            showContextMenu (h, trackId);
+            return;
+        }
 
         if (h.clip == nullptr && h.audioClip == nullptr)
         {
@@ -338,11 +375,87 @@ public:
             curTrack = trackId; curClip = h.clip->id; curAudioClipId = -1;
             origTrack = trackId; origStart = h.clip->start; origLen = h.clip->clip.length();
         }
-        downBeat = e.position.x / owner.ppb;
-        const float right = static_cast<float> ((h.audioClip != nullptr ? h.audioClip->end() : h.clip->end()) * owner.ppb);
+        downBeat = e.position.x / owner.pixelsPerBeat;
+        const float right = static_cast<float> ((h.audioClip != nullptr ? h.audioClip->end() : h.clip->end()) * owner.pixelsPerBeat);
         mode = (e.position.x > right - 7.0f) ? Mode::Resize : Mode::Move;
         setMouseCursor (mode == Mode::Resize ? juce::MouseCursor::LeftRightResizeCursor
                                              : juce::MouseCursor::DraggingHandCursor);
+    }
+
+    void showContextMenu (const Hit& h, int trackId)
+    {
+        juce::PopupMenu menu, gridMenu;
+        const bool isAudio = h.audioClip != nullptr;
+        const int clipId = isAudio ? h.audioClip->id : (h.clip != nullptr ? h.clip->id : -1);
+
+        if (clipId >= 0)
+        {
+            menu.addItem (1, theme::ui ("Loopar clipe"));
+            menu.addItem (2, theme::ui ("Apagar clipe"));
+            menu.addSeparator();
+        }
+
+        static constexpr double gridValues[] { 1.0, 0.5, 0.25, 0.125, 4.0 };
+        static constexpr const char* gridLabels[] { "1/4", "1/8", "1/16", "1/32", "1 compasso" };
+        for (int i = 0; i < 5; ++i)
+            gridMenu.addItem (100 + i, theme::ui (gridLabels[i]), true,
+                              std::abs (owner.gridBeats() - gridValues[i]) < 1.0e-9);
+        gridMenu.addItem (105, theme::ui ("Sem grade"), true, owner.gridBeats() <= 0.0);
+        menu.addSubMenu (theme::ui ("Grade de edição"), gridMenu);
+
+        juce::Component::SafePointer<Lanes> safeThis (this);
+        menu.showMenuAsync ({}, [safeThis, trackId, clipId, isAudio] (int result)
+        {
+            if (safeThis == nullptr) return;
+
+            if (result >= 100 && result <= 104)
+            {
+                static constexpr double values[] { 1.0, 0.5, 0.25, 0.125, 4.0 };
+                safeThis->owner.setGridBeat (values[result - 100]);
+                return;
+            }
+            if (result == 105)
+            {
+                safeThis->owner.setGridBeat (0.0);
+                return;
+            }
+
+            if (clipId < 0) return;
+            if (result == 1)
+            {
+                double start = 0.0, end = 0.0;
+                if (const auto* track = safeThis->project.track (trackId))
+                {
+                    if (isAudio)
+                    {
+                        if (const auto* clip = track->findAudioClip (clipId))
+                        {
+                            start = clip->start;
+                            end = clip->end();
+                        }
+                    }
+                    else if (const auto* clip = track->find (clipId))
+                    {
+                        start = clip->start;
+                        end = clip->end();
+                    }
+                }
+
+                if (end > start)
+                {
+                    safeThis->project.setLoop (start, end);
+                    if (safeThis->owner.onLoopToggleRequested)
+                        safeThis->owner.onLoopToggleRequested (true);
+                }
+            }
+            else if (result == 2)
+            {
+                if (isAudio)
+                    safeThis->project.deleteAudioClip (trackId, clipId);
+                else
+                    safeThis->project.deleteClip (trackId, clipId);
+            }
+        });
     }
 
     void mouseMove (const juce::MouseEvent& e) override { updateCursor (e.position); }
@@ -356,7 +469,7 @@ public:
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (mode == Mode::None) return;
-        const double beat = e.position.x / owner.ppb;
+        const double beat = e.position.x / owner.pixelsPerBeat;
         const bool noSnap = e.mods.isAltDown();
 
         if (mode == Mode::Move)
@@ -459,7 +572,7 @@ public:
         }
         if (h.trackIndex < 0 || h.clip != nullptr) return;
         const int trackId = project.tracks[static_cast<size_t> (h.trackIndex)]->id;
-        const double start = std::floor ((e.position.x / owner.ppb) / 4.0) * 4.0;
+        const double start = std::floor ((e.position.x / owner.pixelsPerBeat) / 4.0) * 4.0;
         if (project.tracks[static_cast<size_t> (h.trackIndex)]->type == roll::TrackType::Midi)
             project.addClip (trackId, start, 4.0);                     // 1 compasso
     }
@@ -538,7 +651,7 @@ private:
         const int target = trackIndexAt (details.localPosition.y);
         dragDropIsAudio = description.startsWith ("audio:");
         dragTrackIndex = target;
-        dragBeat = owner.snapBeat (details.localPosition.x / owner.ppb);
+        dragBeat = owner.snapBeat (details.localPosition.x / owner.pixelsPerBeat);
         dragDropAllowed = false;
         const int trackId = target >= 0
             ? project.tracks[static_cast<std::size_t> (target)]->id : -1;
@@ -564,7 +677,7 @@ private:
     {
         dragDropIsAudio = true;
         dragTrackIndex = trackIndexAt (y);
-        dragBeat = owner.snapBeat (static_cast<double> (x) / owner.ppb);
+        dragBeat = owner.snapBeat (static_cast<double> (x) / owner.pixelsPerBeat);
         dragDropAllowed = false;
         if (files.size() == 1 && owner.canAcceptAudioDrop)
         {
@@ -597,7 +710,7 @@ private:
             return;
         }
 
-        const float right = static_cast<float> ((h.audioClip != nullptr ? h.audioClip->end() : h.clip->end()) * owner.ppb);
+        const float right = static_cast<float> ((h.audioClip != nullptr ? h.audioClip->end() : h.clip->end()) * owner.pixelsPerBeat);
         setMouseCursor (position.x > right - 7.0f ? juce::MouseCursor::LeftRightResizeCursor
                                                    : juce::MouseCursor::DraggingHandCursor);
     }
@@ -627,7 +740,7 @@ private:
         const juce::String message = mode == Mode::Resize
             ? "Tamanho: " + juce::String (clipLength / 4.0, 1) + " compassos"
             : "Movendo: compasso " + juce::String (static_cast<int> (std::floor (clipStart / 4.0)) + 1);
-        const int x = std::clamp (static_cast<int> ((clipStart + clipLength) * owner.ppb) + 8, 4, std::max (4, getWidth() - 194));
+        const int x = std::clamp (static_cast<int> ((clipStart + clipLength) * owner.pixelsPerBeat) + 8, 4, std::max (4, getWidth() - 194));
         const int y = static_cast<int> (project.trackIndex (curTrack)) * trackHeight + 8;
         const auto hint = juce::Rectangle<int> (x, y, 190, 24);
         g.setColour (theme::panel().withAlpha (0.96f));
@@ -661,7 +774,7 @@ public:
     {
         g.fillAll (theme::panelLight());
         const auto cb = g.getClipBounds();
-        const double ppb = owner.ppb;
+        const double ppb = owner.pixelsPerBeat;
 
         // brace de loop
         const float lx0 = static_cast<float> (project.loopStart * ppb), lx1 = static_cast<float> (project.loopEnd * ppb);
@@ -716,7 +829,7 @@ public:
         lastMouseX = e.position.x;
         if (e.y <= 10)
         {
-            const double ppb = owner.ppb;
+            const double ppb = owner.pixelsPerBeat;
             const float lx0 = static_cast<float> (project.loopStart * ppb), lx1 = static_cast<float> (project.loopEnd * ppb);
             if (std::abs (e.position.x - lx0) < 6.0f)       mode = Mode::LoopLeft;
             else if (std::abs (e.position.x - lx1) < 6.0f)  mode = Mode::LoopRight;
@@ -724,7 +837,7 @@ public:
         }
         hoverMode = mode;
         updateCursor (e.position);
-        if (mode == Mode::Seek && owner.onSeek) owner.onSeek (std::max (0.0, e.position.x / owner.ppb));
+        if (mode == Mode::Seek && owner.onSeek) owner.onSeek (std::max (0.0, e.position.x / owner.pixelsPerBeat));
         repaint();
     }
 
@@ -752,16 +865,16 @@ public:
     void mouseDrag (const juce::MouseEvent& e) override
     {
         lastMouseX = e.position.x;
-        const double beat = std::max (0.0, std::round (e.position.x / owner.ppb));
+        const double beat = std::max (0.0, std::round (e.position.x / owner.pixelsPerBeat));
         switch (mode)
         {
-            case Mode::Seek:      if (owner.onSeek) owner.onSeek (std::max (0.0, e.position.x / owner.ppb)); break;
+            case Mode::Seek:      if (owner.onSeek) owner.onSeek (std::max (0.0, e.position.x / owner.pixelsPerBeat)); break;
             case Mode::LoopLeft:  project.setLoop (std::min (beat, project.loopEnd - 1.0), project.loopEnd); break;
             case Mode::LoopRight: project.setLoop (project.loopStart, std::max (beat, project.loopStart + 1.0)); break;
             case Mode::LoopMove:
             {
                 const double len = project.loopEnd - project.loopStart;
-                const double s = std::max (0.0, std::round (e.position.x / owner.ppb - grabOffset));
+                const double s = std::max (0.0, std::round (e.position.x / owner.pixelsPerBeat - grabOffset));
                 project.setLoop (s, s + len);
                 break;
             }
@@ -791,8 +904,8 @@ private:
         if (position.y > 10.0f)
             return Mode::Seek;
 
-        const float left = static_cast<float> (project.loopStart * owner.ppb);
-        const float right = static_cast<float> (project.loopEnd * owner.ppb);
+        const float left = static_cast<float> (project.loopStart * owner.pixelsPerBeat);
+        const float right = static_cast<float> (project.loopEnd * owner.pixelsPerBeat);
         if (std::abs (position.x - left) < 6.0f)  return Mode::LoopLeft;
         if (std::abs (position.x - right) < 6.0f) return Mode::LoopRight;
         if (position.x > left && position.x < right) return Mode::LoopMove;
@@ -854,6 +967,22 @@ public:
         addAndMakeVisible (mute);
         addAndMakeVisible (solo);
         addAndMakeVisible (volume);
+        addAndMakeVisible (volumeDb);
+        addAndMakeVisible (routingButton);
+
+        routingButton.setMouseClickGrabsKeyboardFocus (false);
+        updateRoutingButton();
+        routingButton.onClick = [this]
+        {
+            if (auto* tr = project.track (trackId))
+            {
+                auto next = (tr->outputRouting == roll::TrackOutputRouting::Master)
+                                ? roll::TrackOutputRouting::ExtOut
+                                : roll::TrackOutputRouting::Master;
+                project.setTrackRouting (trackId, next);
+                updateRoutingButton();
+            }
+        };
 
         name.setText (juce::String (t->name), juce::dontSendNotification);
         name.setEditable (false, true, false);
@@ -886,13 +1015,62 @@ public:
         volume.setRange (0.0, 1.5, 0.001);
         volume.setValue (t->volume, juce::dontSendNotification);
         volume.setMouseClickGrabsKeyboardFocus (false);
-        volume.onValueChange = [this] { if (auto* tr = project.track (trackId)) { tr->volume = volume.getValue(); project.notifyMixer(); } };
-        volume.setDoubleClickReturnValue (true, 0.8);
+        volume.setPopupDisplayEnabled (true, true, nullptr);
+        volume.textFromValueFunction = [] (double v)
+        {
+            const float db = roll::gainToDecibels (static_cast<float> (v));
+            if (db <= -59.5f) return juce::String ("-inf dB");
+            return (db >= 0.05f ? juce::String ("+") : juce::String()) + juce::String (db, 1) + " dB";
+        };
+        volumeDb.setFont (juce::FontOptions (10.0f));
+        volumeDb.setColour (juce::Label::textColourId, theme::textDim());
+        volumeDb.setJustificationType (juce::Justification::centredRight);
+        updateVolumeText (t->volume);
+        volume.onValueChange = [this]
+        {
+            if (auto* tr = project.track (trackId))
+            {
+                tr->volume = volume.getValue();
+                updateVolumeText (tr->volume);
+                project.notifyMixer();
+            }
+        };
+        volume.setDoubleClickReturnValue (true, 1.0);
     }
 
     int id() const { return trackId; }
     void setPeak (float p) { if (std::abs (p - peak) > 0.004f) { peak = p; repaint (getWidth() - 16, 0, 16, getHeight()); } }
-    void refreshText() { repaint(); }
+    void refreshText()
+    {
+        updateRoutingButton();
+        if (const auto* tr = project.track (trackId))
+        {
+            volume.setValue (tr->volume, juce::dontSendNotification);
+            updateVolumeText (tr->volume);
+        }
+        repaint();
+    }
+
+    void updateVolumeText (double gain)
+    {
+        const float db = roll::gainToDecibels (static_cast<float> (gain));
+        volumeDb.setText (db <= -59.5f ? "-inf dB"
+                                       : (db >= 0.05f ? "+" : "") + juce::String (db, 1) + " dB",
+                          juce::dontSendNotification);
+    }
+
+    void updateRoutingButton()
+    {
+        if (auto* tr = project.track (trackId))
+        {
+            const bool ext = (tr->outputRouting == roll::TrackOutputRouting::ExtOut);
+            routingButton.setButtonText (ext ? "Ext. Out" : "Master");
+            routingButton.setColour (juce::TextButton::buttonColourId, ext ? juce::Colour (0xffe67e22) : theme::panelLight());
+            routingButton.setColour (juce::TextButton::textColourOffId, ext ? juce::Colours::black : theme::textDim());
+            routingButton.setTooltip (ext ? theme::ui ("Destino: Ext. Out (Direto - bypassa o Master)")
+                                          : theme::ui ("Destino: Master (processado pelo canal Master)"));
+        }
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -925,7 +1103,10 @@ public:
         auto a = getLocalBounds().reduced (6, 4);
         a.removeFromLeft (8);
         a.removeFromRight (14);
-        name.setBounds (a.removeFromTop (22));
+        auto topRow = a.removeFromTop (22);
+        routingButton.setBounds (topRow.removeFromRight (58));
+        topRow.removeFromRight (4);
+        name.setBounds (topRow);
         a.removeFromTop (18);
         auto row = a.removeFromTop (24);
         mute.setBounds (row.removeFromLeft (26));
@@ -933,6 +1114,9 @@ public:
         solo.setBounds (row.removeFromLeft (26));
         row.removeFromLeft (6);
         volumeIconBounds = row.removeFromLeft (20);
+        const int dbWidth = std::min (48, row.getWidth() / 3);
+        volumeDb.setBounds (row.removeFromRight (dbWidth));
+        row.removeFromRight (4);
         volume.setBounds (row);
     }
 
@@ -962,10 +1146,184 @@ private:
     ArrangementView& owner;
     int trackId;
     juce::Rectangle<int> volumeIconBounds;
-    juce::Label name;
+    juce::Label name, volumeDb;
     juce::TextButton mute { "M" }, solo { "S" };
+    juce::TextButton routingButton;
     juce::Slider volume;
     float peak = 0.0f;
+};
+
+// ============================================================ MasterHeader (trilha Master)
+
+class ArrangementView::MasterHeader : public juce::Component
+{
+public:
+    MasterHeader (ProjectModel& p, ArrangementView& o) : project (p), owner (o)
+    {
+        addAndMakeVisible (name);
+        addAndMakeVisible (volume);
+        addAndMakeVisible (dbLabel);
+
+        name.setText ("Master", juce::dontSendNotification);
+        name.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        name.setColour (juce::Label::textColourId, theme::text());
+
+        volume.setSliderStyle (juce::Slider::LinearHorizontal);
+        volume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        volume.setRange (-60.0, 6.0, 0.1);
+        volume.setValue (0.0, juce::dontSendNotification);
+        volume.setDoubleClickReturnValue (true, 0.0);
+        volume.setTooltip (theme::ui ("Volume Master (-inf a +6.0 dB)"));
+        volume.setMouseClickGrabsKeyboardFocus (false);
+
+        dbLabel.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+        dbLabel.setColour (juce::Label::textColourId, theme::textDim());
+        dbLabel.setJustificationType (juce::Justification::centredRight);
+        updateDbText (0.0f);
+
+        volume.onValueChange = [this]
+        {
+            const float db = static_cast<float> (volume.getValue());
+            updateDbText (db);
+            if (project.masterTrack != nullptr)
+            {
+                project.masterTrack->volume = roll::decibelsToGain (db);
+                project.notifyMixer();
+            }
+        };
+    }
+
+    void updateDbText (float db)
+    {
+        if (db <= -59.5f)
+            dbLabel.setText ("-inf dB", juce::dontSendNotification);
+        else
+        {
+            juce::String s = (db >= 0.05f ? "+" : "") + juce::String (db, 1) + " dB";
+            dbLabel.setText (s, juce::dontSendNotification);
+        }
+    }
+
+    void setPeak (float p)
+    {
+        if (p >= 1.0f)
+            clipHeld = true;
+
+        if (std::abs (p - peak) > 0.003f)
+        {
+            peak = p;
+            repaint (getWidth() - 24, 0, 24, getHeight());
+        }
+    }
+
+    void refreshText()
+    {
+        if (project.masterTrack != nullptr)
+        {
+            const float db = roll::gainToDecibels (static_cast<float> (project.masterTrack->volume));
+            volume.setValue (db, juce::dontSendNotification);
+            updateDbText (db);
+        }
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const bool sel = (project.selectedTrackId == 0);
+        g.setColour (sel ? theme::panelLight().brighter (0.15f) : theme::panel());
+        g.fillRect (getLocalBounds());
+
+        // Faixa de cor da trilha Master (ouro/laranja)
+        g.setColour (juce::Colour (0xffe67e22));
+        g.fillRect (0, 0, 6, getHeight());
+
+        g.setColour (theme::border());
+        g.drawHorizontalLine (getHeight() - 1, 0.0f, static_cast<float> (getWidth()));
+
+        // Resumo de efeitos na Master
+        g.setColour (theme::textDim());
+        g.setFont (juce::FontOptions (11.0f));
+        const juce::String summary = owner.deviceSummary ? owner.deviceSummary (0) : juce::String();
+        g.drawText (summary.isEmpty() ? theme::ui ("sem efeitos") : summary, 14, 26, getWidth() - 40, 16, juce::Justification::centredLeft, true);
+
+        if (const auto* volumeIcon = icons::get (icons::Icon::Volume, theme::textDim(), 16))
+            volumeIcon->drawWithin (g, volumeIconBounds.toFloat(), juce::RectanglePlacement::centred, 1.0f);
+
+        // Medidor de decibeis (dBFS) com indicador de clip
+        const int meterX = getWidth() - 18;
+        const int meterY = 6;
+        const int meterW = 10;
+        const int meterH = getHeight() - 12;
+        const int clipBoxH = 7;
+        const int barH = meterH - clipBoxH - 2;
+        const int barY = meterY + clipBoxH + 2;
+
+        // Clip indicator box
+        g.setColour (clipHeld ? juce::Colour (0xffff3b30) : juce::Colours::black.withAlpha (0.45f));
+        g.fillRect (meterX, meterY, meterW, clipBoxH);
+        g.setColour (juce::Colours::black.withAlpha (0.3f));
+        g.drawRect (meterX, meterY, meterW, clipBoxH, 1);
+
+        // Fundo do medidor
+        g.setColour (juce::Colours::black.withAlpha (0.4f));
+        g.fillRect (meterX, barY, meterW, barH);
+
+        // Nível em dB (-48 dB até 0 dB)
+        const float db = roll::gainToDecibels (peak);
+        const float norm = std::clamp ((db + 48.0f) / 48.0f, 0.0f, 1.0f);
+        const int fillH = static_cast<int> (norm * barH);
+
+        if (fillH > 0)
+        {
+            // Cores: verde ate -12dB (norm < 0.75), amarelo/laranja ate 0dB
+            const auto barColour = norm > 0.75f ? (norm >= 0.98f ? theme::warning() : juce::Colour (0xfff39c12))
+                                                : theme::accent();
+            g.setColour (barColour);
+            g.fillRect (meterX, barY + barH - fillH, meterW, fillH);
+        }
+
+        // Marcas de -12 dB e 0 dB
+        g.setColour (juce::Colours::white.withAlpha (0.25f));
+        g.drawHorizontalLine (barY, static_cast<float> (meterX - 2), static_cast<float> (meterX + meterW));
+        g.drawHorizontalLine (barY + static_cast<int> (barH * 0.25f), static_cast<float> (meterX - 2), static_cast<float> (meterX + meterW));
+    }
+
+    void resized() override
+    {
+        auto a = getLocalBounds().reduced (6, 4);
+        a.removeFromLeft (8);
+        a.removeFromRight (22);
+        auto topRow = a.removeFromTop (22);
+        name.setBounds (topRow.removeFromLeft (70));
+        dbLabel.setBounds (topRow);
+        a.removeFromTop (18);
+        auto row = a.removeFromTop (24);
+        volumeIconBounds = row.removeFromLeft (20);
+        row.removeFromLeft (4);
+        volume.setBounds (row);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        project.selectTrack (0);
+        owner.grabFocus();
+
+        // Se clicou no clip box, reseta o clip
+        if (e.x >= getWidth() - 24 && e.y <= 16)
+        {
+            clipHeld = false;
+            repaint();
+        }
+    }
+
+private:
+    ProjectModel& project;
+    ArrangementView& owner;
+    juce::Label name, dbLabel;
+    juce::Slider volume;
+    juce::Rectangle<int> volumeIconBounds;
+    float peak = 0.0f;
+    bool clipHeld = false;
 };
 
 // ============================================================ ArrangementView
@@ -988,6 +1346,8 @@ ArrangementView::ArrangementView (ProjectModel& p) : project (p)
 
     addTrackButton.setMouseClickGrabsKeyboardFocus (false);
     addAudioTrackButton.setMouseClickGrabsKeyboardFocus (false);
+    addTrackButton.setTooltip ("Adicionar trilha MIDI (Ctrl+Shift+T)");
+    addAudioTrackButton.setTooltip ("Adicionar trilha de audio (Ctrl+Shift+A)");
     gridBox.setMouseClickGrabsKeyboardFocus (false);
     addTrackButton.onClick = [this] { project.addTrack(); };
     addAudioTrackButton.onClick = [this] { project.addTrack (roll::TrackType::Audio); };
@@ -996,17 +1356,16 @@ ArrangementView::ArrangementView (ProjectModel& p) : project (p)
     gridBox.addItem ("1/16", 3);
     gridBox.addItem ("1/32", 4);
     gridBox.addItem ("1 compasso", 5);
+    gridBox.addItem ("Sem grade", 6);
     gridBox.setSelectedId (3, juce::dontSendNotification);
     gridBox.onChange = [this]
     {
         static constexpr double values[] = { 1.0, 0.5, 0.25, 0.125, 4.0 };
         const int id = gridBox.getSelectedId();
         if (id >= 1 && id <= 5)
-        {
-            gridBeat = values[id - 1];
-            lanes->repaint();
-            if (onGridChanged) onGridChanged();
-        }
+            setGridBeat (values[id - 1]);
+        else if (id == 6)
+            setGridBeat (0.0);
     };
 
     project.addChangeListener (this);
@@ -1025,7 +1384,7 @@ void ArrangementView::grabFocus() { lanes->grabKeyboardFocus(); }
 
 void ArrangementView::zoom (double factor)
 {
-    ppb = std::clamp (ppb * factor, 4.0, 120.0);
+    pixelsPerBeat = std::clamp (pixelsPerBeat * factor, 4.0, 120.0);
     updateSizes();
     lanes->repaint();
     ruler->repaint();
@@ -1033,15 +1392,32 @@ void ArrangementView::zoom (double factor)
 
 double ArrangementView::snapBeat (double beat) const
 {
+    if (gridBeat <= 0.0)
+        return std::max (0.0, beat);
     return std::max (0.0, std::round (beat / gridBeat) * gridBeat);
+}
+
+void ArrangementView::setGridBeat (double beats)
+{
+    gridBeat = std::max (0.0, beats);
+    static constexpr double values[] { 1.0, 0.5, 0.25, 0.125, 4.0 };
+    int selectedId = 0;
+    for (int i = 0; i < 5; ++i)
+        if (std::abs (gridBeat - values[i]) < 1.0e-9)
+            selectedId = i + 1;
+    if (gridBeat <= 0.0)
+        selectedId = 6;
+    gridBox.setSelectedId (selectedId, juce::dontSendNotification);
+    lanes->repaint();
+    if (onGridChanged) onGridChanged();
 }
 
 void ArrangementView::setPlayhead (double beats)
 {
-    const int oldX = static_cast<int> (playhead * ppb);
+    const int oldX = static_cast<int> (playhead * pixelsPerBeat);
     lanes->setPlayhead (beats);
     ruler->repaint (oldX - 6, 0, 14, rulerHeight);
-    ruler->repaint (static_cast<int> (beats * ppb) - 6, 0, 14, rulerHeight);
+    ruler->repaint (static_cast<int> (beats * pixelsPerBeat) - 6, 0, 14, rulerHeight);
 }
 
 void ArrangementView::setLoopEnabled (bool on)
@@ -1059,6 +1435,11 @@ void ArrangementView::refresh()
     {
         headers.push_back (std::make_unique<Header> (project, *this, t->id));
         headerHolder.addAndMakeVisible (*headers.back());
+    }
+    if (masterHeader == nullptr)
+    {
+        masterHeader = std::make_unique<MasterHeader> (project, *this);
+        headerHolder.addAndMakeVisible (*masterHeader);
     }
     updateSizes();
     resized();
@@ -1078,6 +1459,8 @@ void ArrangementView::syncPositions()
     headerHolder.setSize (headerWidth, viewport.getMaximumVisibleHeight());
     for (size_t i = 0; i < headers.size(); ++i)
         headers[i]->setBounds (0, static_cast<int> (i) * trackHeight - vp.y, headerWidth, trackHeight);
+    if (masterHeader != nullptr)
+        masterHeader->setBounds (0, static_cast<int> (headers.size()) * trackHeight - vp.y, headerWidth, trackHeight);
 }
 
 void ArrangementView::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -1087,6 +1470,7 @@ void ArrangementView::changeListenerCallback (juce::ChangeBroadcaster*)
     {
         updateSizes();
         for (auto& h : headers) h->refreshText();
+        if (masterHeader != nullptr) masterHeader->refreshText();
     }
     lanes->repaint();
     ruler->repaint();
@@ -1099,7 +1483,10 @@ void ArrangementView::timerCallback()
     if (vp != last) { last = vp; syncPositions(); }
 
     if (meterProvider)
+    {
         for (auto& h : headers) h->setPeak (meterProvider (h->id()));
+        if (masterHeader != nullptr) masterHeader->setPeak (meterProvider (0));
+    }
 }
 
 void ArrangementView::paint (juce::Graphics& g)

@@ -7,6 +7,7 @@
 namespace roll
 {
 enum class TrackType { Midi, Audio };
+enum class TrackOutputRouting { Master, ExtOut };
 
 // Um clip colocado na linha do tempo de uma trilha (posição em beats).
 struct Placement
@@ -39,10 +40,11 @@ public:
     int         id = 0;
     std::string name;
     TrackType   type = TrackType::Midi;
-    double      volume = 0.8;     // ganho linear (0..1.5)
+    double      volume = 1.0;     // ganho linear (0..1.5)
     double      pan = 0.0;        // -1..1
     bool        mute = false;
     bool        solo = false;
+    TrackOutputRouting outputRouting = TrackOutputRouting::Master;
 
     std::vector<std::unique_ptr<Placement>> clips;
     std::vector<std::unique_ptr<AudioPlacement>> audioClips;
@@ -75,4 +77,8 @@ private:
 // Junta os clips da trilha numa lista de notas em tempo absoluto (o que o sequenciador toca).
 // Notas além do fim do clip são cortadas/descartadas.
 std::vector<Note> flatten (const Track& track);
+
+// Conversao linear <-> decibeis para faders e medidores
+float gainToDecibels (float gain, float minusInfinityDb = -60.0f);
+float decibelsToGain (float decibels);
 } // namespace roll

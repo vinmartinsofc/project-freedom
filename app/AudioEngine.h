@@ -88,9 +88,9 @@ public:
     void setStateInformation (const void*, int) override {}
 
 private:
-    std::atomic<float> targetGain { 0.8f }, targetPan { 0.0f }, peakLevel { 0.0f };
+    std::atomic<float> targetGain { 1.0f }, targetPan { 0.0f }, peakLevel { 0.0f };
     std::atomic<bool> mute { false };
-    float currentGain = 0.8f;
+    float currentGain = 1.0f;
 };
 
 // Grafo principal: dono do relógio do transporte.
@@ -174,6 +174,7 @@ private:
     const BlockShared& shared;
     juce::SpinLock clipsLock;
     std::vector<AudioClipPlayback> pendingClips, localClips;
+    std::uint64_t pendingVersion = 0, localVersion = 0;
 };
 
 class AudioPreviewSource : public juce::AudioProcessor
@@ -214,6 +215,8 @@ private:
 class AudioEngine
 {
 public:
+    static constexpr int masterTrackId = 0;
+
     AudioEngine();
     ~AudioEngine();
 
@@ -226,9 +229,12 @@ public:
     void publishNotes (int trackId, const std::vector<roll::Note>& notes);
     void publishAudioClips (int trackId, const std::vector<AudioClipPlayback>& clips);
     void setMixer (int trackId, float gain, float pan, bool muted);
+    void setTrackRouting (int trackId, roll::TrackOutputRouting routing);
+    void setMasterMixer (float gain, float pan, bool muted = false);
     void previewNote (int trackId, int pitch, bool on);
     void activeMask (int trackId, std::uint64_t& lo, std::uint64_t& hi) const;
     float peak (int trackId) const;
+    float masterPeak() const;
 
     // dispositivos (plugins) da trilha: o instrumento vem sempre primeiro, efeitos em seguida
     void addDevice (int trackId, const juce::PluginDescription&, std::function<void (const juce::String& error, int deviceId)> onDone);
@@ -257,13 +263,17 @@ private:
         TrackAudioSource* audioSourcePtr = nullptr;
         TrackMixer*  mixerPtr = nullptr;
         bool audioTrack = false;
+        bool isMaster = false;
+        roll::TrackOutputRouting routing = roll::TrackOutputRouting::Master;
         std::vector<Device> devices;
     };
 
     TrackNodes* find (int trackId);
     const TrackNodes* find (int trackId) const;
     void rewire (TrackNodes&);
+    void rewireMaster();
     void clearConnectionsOf (juce::AudioProcessorGraph::NodeID);
+    void clearOutputConnectionsOf (juce::AudioProcessorGraph::NodeID);
 
     juce::AudioDeviceManager deviceManager;
     juce::AudioPluginFormatManager formatManager;

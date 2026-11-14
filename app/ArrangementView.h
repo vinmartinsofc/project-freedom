@@ -22,9 +22,11 @@ public:
     std::function<void (const juce::File&, int trackId, double beats)> onAudioDropped;
     std::function<void (int trackId, int clipId)> onAudioClipDoubleClicked;
     std::function<void()> onGridChanged;
+    std::function<void (bool)> onLoopToggleRequested;
 
     void setPlayhead (double beats);
     void setLoopEnabled (bool on);
+    void setGridBeat (double beats);
     void refresh();                       // recria os cabeçalhos
     void grabFocus();
     void zoom (double factor);
@@ -40,9 +42,11 @@ private:
     class Lanes;
     class Ruler;
     class Header;
+    class MasterHeader;
     friend class Lanes;
     friend class Ruler;
     friend class Header;
+    friend class MasterHeader;
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
@@ -51,7 +55,7 @@ private:
     static juce::Colour colourFor (int trackId);
 
     ProjectModel& project;
-    double ppb = 22.0;                    // pixels por beat
+    double pixelsPerBeat = 22.0;          // pixels por beat
     double playhead = 0.0;
     bool loopEnabled = true;
     double gridBeat = 0.25;
@@ -59,6 +63,7 @@ private:
     std::unique_ptr<Lanes> lanes;
     std::unique_ptr<Ruler> ruler;
     std::vector<std::unique_ptr<Header>> headers;
+    std::unique_ptr<MasterHeader> masterHeader;
     juce::Viewport viewport;
     juce::Component headerHolder, rulerHolder;
     juce::TextButton addTrackButton { "+ MIDI" }, addAudioTrackButton { "+ Audio" };

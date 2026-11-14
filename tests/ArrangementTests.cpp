@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "Arrangement.h"
+#include <cmath>
 
 using namespace roll;
 
@@ -76,4 +77,39 @@ TEST_CASE("Mover clip de audio preserva seus metadados")
     REQUIRE(destination.audioClips.front()->waveform.size() == 2);
     REQUIRE(destination.audioClips.front()->durationSeconds == 2.0);
     REQUIRE(destination.audioClips.front()->sourceBpm == 120.0);
+}
+
+TEST_CASE("Roteamento de saida da trilha padrao e Master e pode ser alterado para ExtOut")
+{
+    Track track;
+    REQUIRE(track.outputRouting == TrackOutputRouting::Master);
+
+    track.outputRouting = TrackOutputRouting::ExtOut;
+    REQUIRE(track.outputRouting == TrackOutputRouting::ExtOut);
+}
+
+TEST_CASE("Trilhas iniciam com ganho unitario")
+{
+    Track track;
+    REQUIRE(track.volume == 1.0);
+    REQUIRE(std::abs(gainToDecibels(static_cast<float>(track.volume))) < 0.001f);
+}
+
+TEST_CASE("Conversao linear e decibeis com ganho unitario e menos infinito")
+{
+    // Ganho unitario 1.0 = 0.0 dB
+    REQUIRE(std::abs(gainToDecibels(1.0f) - 0.0f) < 0.001f);
+    REQUIRE(std::abs(decibelsToGain(0.0f) - 1.0f) < 0.001f);
+
+    // +6.0 dB ~ 1.995
+    REQUIRE(std::abs(decibelsToGain(6.0f) - 1.99526f) < 0.005f);
+    REQUIRE(std::abs(gainToDecibels(1.99526f) - 6.0f) < 0.01f);
+
+    // -6.0 dB ~ 0.501
+    REQUIRE(std::abs(decibelsToGain(-6.0f) - 0.50118f) < 0.005f);
+    REQUIRE(std::abs(gainToDecibels(0.50118f) - (-6.0f)) < 0.01f);
+
+    // Silencio / -inf dB
+    REQUIRE(gainToDecibels(0.0f) == -60.0f);
+    REQUIRE(decibelsToGain(-60.0f) == 0.0f);
 }

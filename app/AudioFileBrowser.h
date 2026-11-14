@@ -24,6 +24,16 @@ private:
     };
 
     class FileTreeItem;
+    class FileTreeView : public juce::TreeView
+    {
+    public:
+        explicit FileTreeView (AudioFileBrowser& browser) : owner (browser) {}
+        bool keyPressed (const juce::KeyPress&) override;
+
+    private:
+        AudioFileBrowser& owner;
+    };
+
     void populate (FileTreeItem&);
     void selectFile (const juce::File&);
     void previewFile (const juce::File&);
@@ -36,7 +46,7 @@ private:
 
     juce::Label title { {}, "Arquivos de audio" };
     juce::Label status { {}, "Selecione um arquivo de audio para ouvir" };
-    juce::TreeView tree;
+    FileTreeView tree { *this };
     juce::TextButton previewButton { "Ouvir" }, stopButton { "Parar" };
     juce::ToggleButton autoPreviewButton { "Auto" };
     juce::Label previewGainLabel { {}, "Volume" };

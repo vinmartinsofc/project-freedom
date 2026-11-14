@@ -107,6 +107,15 @@ private:
     int favoriteColor = -1;
 };
 
+bool AudioFileBrowser::FileTreeView::keyPressed (const juce::KeyPress& key)
+{
+    auto* previouslySelected = getSelectedItem (0);
+    const bool handled = juce::TreeView::keyPressed (key);
+    if (handled && getSelectedItem (0) != previouslySelected)
+        owner.previewFile (owner.selectedFile);
+    return handled;
+}
+
 AudioFileBrowser::AudioFileBrowser()
 {
     juce::PropertiesFile::Options options;
@@ -127,6 +136,7 @@ AudioFileBrowser::AudioFileBrowser()
     tree.setRootItem (new FileTreeItem (*this, {}, FileTreeItem::Kind::ComputerRoot));
     tree.getRootItem()->setOpen (true);
     tree.setIndentSize (10);
+    tree.setWantsKeyboardFocus (true);
     addAndMakeVisible (tree);
 
     status.setFont (juce::FontOptions (10.5f));

@@ -37,13 +37,20 @@ public:
     void selectClip (int trackId, int clipId);
 
     roll::Placement* addClip (int trackId, double start, double length);
+    int copyClip (int fromTrack, int clipId, int toTrack, double start);
+    int duplicateClip (int trackId, int clipId);
     void deleteClip (int trackId, int clipId);
+    int splitClip (int trackId, int clipId, double beat);
     roll::AudioPlacement* addAudioClip (int trackId, double start, double length,
                                         const std::string& filePath, const std::string& name,
                                         const std::vector<float>& waveform,
                                         double durationSeconds = 0.0, double sourceBpm = 120.0);
     void deleteAudioClip (int trackId, int clipId);
+    int copyAudioClip (int fromTrack, int clipId, int toTrack, double start);
+    int duplicateAudioClip (int trackId, int clipId);
+    int splitAudioClip (int trackId, int clipId, double beat);
     bool resizeAudioClip (int trackId, int clipId, double length);
+    bool setAudioClipFades (int trackId, int clipId, double fadeInBeats, double fadeOutBeats);
     bool setAudioClipSourceBpm (int trackId, int clipId, double sourceBpm);
     // move para outra trilha/posição; devolve o novo id do clip (ou -1 se não coube)
     int  moveClip (int fromTrack, int clipId, int toTrack, double newStart);
@@ -54,7 +61,26 @@ public:
     void notifyMixer()   { if (onMixerChanged) onMixerChanged(); sendChangeMessage(); }
     void setLoop (double s, double e);
     void growTo (double beats);
+    void beginEdit();
+    void endEdit();
+    bool undo();
+    bool redo();
+    bool retainsAudioFile (const std::string& path) const;
 
 private:
+    struct Snapshot
+    {
+        std::vector<roll::Track> tracks;
+        int selectedTrackId = -1, selectedClipId = -1, selectedAudioClipId = -1;
+        int nextTrackId = 1;
+        double loopStart = 0.0, loopEnd = 16.0, totalBeats = 256.0;
+    };
+
+    Snapshot makeSnapshot() const;
+    void restoreSnapshot (Snapshot&&);
+    void recordUndo();
+
     int nextTrackId = 1;
+    std::vector<Snapshot> undoStack, redoStack;
+    bool editInProgress = false;
 };

@@ -1,6 +1,7 @@
 #include "AudioFileBrowser.h"
 #include <algorithm>
 #include <array>
+#include <set>
 #include <vector>
 
 namespace
@@ -14,51 +15,83 @@ const std::array<juce::Colour, 7> favoriteColors {
 const std::array<const char*, 7> favoriteColorNames {
     "Vermelho", "Laranja", "Amarelo", "Verde", "Azul", "Roxo", "Cinza"
 };
+constexpr std::size_t maxSearchResults = 5000;
 }
 
 class AudioFileBrowser::FileTreeItem : public juce::TreeViewItem
 {
 public:
-    enum class Kind { FileSystem, ComputerRoot, FavoritesRoot, FavoriteCategory, FavoriteEntry };
+    enum class Kind
+    {
+        FileSystem, ComputerRoot, FavoritesRoot, FavoriteCategory, FavoriteEntry,
+        SearchResultsRoot, SearchResultEntry
+    };
 
     FileTreeItem (AudioFileBrowser& browser, juce::File path, Kind itemKind = Kind::FileSystem, int color = -1)
         : owner (browser), file (std::move (path)), kind (itemKind), favoriteColor (color) {}
 
     bool mightContainSubItems() override
     {
-        return (kind != Kind::FileSystem && kind != Kind::FavoriteEntry) || file.isDirectory();
+        if (kind == Kind::FileSystem || kind == Kind::FavoriteEntry)
+            return file.isDirectory();
+        return kind != Kind::SearchResultEntry;
     }
 
     juce::String getUniqueName() const override
     {
         if (kind == Kind::ComputerRoot) return "computer";
         if (kind == Kind::FavoritesRoot) return "favorites";
+        if (kind == Kind::SearchResultsRoot) return "search-results";
         if (kind == Kind::FavoriteCategory) return "favorite-" + juce::String (favoriteColor);
         return file.getFullPathName();
     }
 
     const juce::File& getFile() const { return file; }
 
+    juce::String getTooltip() override
+    {
+        return kind == Kind::SearchResultEntry ? file.getFullPathName() : juce::String();
+    }
+
     void itemSelectionChanged (bool isNowSelected) override
     {
         if (isNowSelected)
-            owner.selectFile (kind == Kind::FileSystem || kind == Kind::FavoriteEntry ? file : juce::File());
+        {
+            const bool shouldSearchAgain = kind == Kind::FileSystem && file.isDirectory()
+                && ! owner.showingFavorites && owner.search.getText().trim().isNotEmpty();
+            if ((kind == Kind::FileSystem || kind == Kind::FavoriteEntry) && file.isDirectory())
+                owner.searchDirectory = file;
+            else if ((kind == Kind::FileSystem || kind == Kind::FavoriteEntry)
+                     && file.existsAsFile())
+                owner.searchDirectory = file.getParentDirectory();
+            owner.selectFile (kind == Kind::FileSystem || kind == Kind::FavoriteEntry || kind == Kind::SearchResultEntry
+                                  ? file : juce::File());
+            if (shouldSearchAgain && owner.searchDirectory.isDirectory())
+            {
+                juce::Component::SafePointer<AudioFileBrowser> safeOwner (&owner);
+                juce::MessageManager::callAsync ([safeOwner]
+                {
+                    if (safeOwner != nullptr)
+                        safeOwner->refreshTree();
+                });
+            }
+        }
     }
 
     void itemClicked (const juce::MouseEvent& event) override
     {
         if (event.mods.isPopupMenu()
-            && (kind == Kind::FileSystem || kind == Kind::FavoriteEntry)
+            && (kind == Kind::FileSystem || kind == Kind::FavoriteEntry || kind == Kind::SearchResultEntry)
             && (file.isDirectory() || AudioFileBrowser::isAudioFile (file)))
             owner.showFavoriteMenu (file, event.getScreenPosition());
         else if (! event.mods.isPopupMenu()
-                 && (kind == Kind::FileSystem || kind == Kind::FavoriteEntry))
+                 && (kind == Kind::FileSystem || kind == Kind::FavoriteEntry || kind == Kind::SearchResultEntry))
             owner.previewFile (file);
     }
 
     juce::var getDragSourceDescription() override
     {
-        return (kind == Kind::FileSystem || kind == Kind::FavoriteEntry)
+        return (kind == Kind::FileSystem || kind == Kind::FavoriteEntry || kind == Kind::SearchResultEntry)
                 && file.existsAsFile() && AudioFileBrowser::isAudioFile (file)
             ? juce::var ("audio:" + file.getFullPathName()) : juce::var();
     }
@@ -77,6 +110,8 @@ public:
             label = favoriteColorNames[static_cast<std::size_t> (favoriteColor)];
             isBold = true;
         }
+        else if (kind == Kind::SearchResultEntry)
+            label = file.getFileName() + "  [" + file.getParentDirectory().getFullPathName() + "]";
         else
         {
             label = file.getFileName();
@@ -109,6 +144,20 @@ private:
 
 bool AudioFileBrowser::FileTreeView::keyPressed (const juce::KeyPress& key)
 {
+    const bool ctrl = key.getModifiers().isCtrlDown() || key.getModifiers().isCommandDown();
+    if (ctrl && juce::CharacterFunctions::toLowerCase (key.getKeyCode()) == 'f')
+    {
+        owner.search.grabKeyboardFocus();
+        owner.search.selectAll();
+        return true;
+    }
+    if ((key.isKeyCode (juce::KeyPress::deleteKey) || key.isKeyCode (juce::KeyPress::backspaceKey))
+        && owner.selectedFile.existsAsFile())
+    {
+        owner.deleteFileToTrash (owner.selectedFile);
+        return true;
+    }
+
     auto* previouslySelected = getSelectedItem (0);
     const bool handled = juce::TreeView::keyPressed (key);
     if (handled && getSelectedItem (0) != previouslySelected)
@@ -172,12 +221,20 @@ AudioFileBrowser::AudioFileBrowser()
         if (onPreviewGainChanged)
             onPreviewGainChanged (static_cast<float> (previewGain.getValue()));
     };
+    search.setTextToShowWhenEmpty ("Buscar na pasta selecionada", theme::textDim());
+    search.onTextChange = [this] { refreshTree(); };
+    addAndMakeVisible (search);
     previewButton.setEnabled (false);
     addAndMakeVisible (previewButton);
     addAndMakeVisible (stopButton);
     addAndMakeVisible (autoPreviewButton);
     addAndMakeVisible (previewGainLabel);
     addAndMakeVisible (previewGain);
+}
+
+AudioFileBrowser::~AudioFileBrowser()
+{
+    searchGeneration->fetch_add (1);
 }
 
 void AudioFileBrowser::paint (juce::Graphics& g)
@@ -191,6 +248,7 @@ void AudioFileBrowser::resized()
 {
     auto area = getLocalBounds().reduced (8);
     title.setBounds (area.removeFromTop (28));
+    search.setBounds (area.removeFromTop (26));
     auto controls = area.removeFromTop (28);
     autoPreviewButton.setBounds (controls.removeFromLeft (56));
     controls.removeFromLeft (2);
@@ -213,9 +271,9 @@ void AudioFileBrowser::setFavoritesMode (bool showing)
     showingFavorites = showing;
     selectFile ({});
     title.setText (showingFavorites ? "Favoritos" : "Arquivos de audio", juce::dontSendNotification);
-    tree.setRootItem (new FileTreeItem (*this, {}, showingFavorites
-        ? FileTreeItem::Kind::FavoritesRoot : FileTreeItem::Kind::ComputerRoot));
-    tree.getRootItem()->setOpen (true);
+    search.setTextToShowWhenEmpty (showingFavorites ? "Buscar nos favoritos" : "Buscar na pasta selecionada",
+                                   theme::textDim());
+    refreshTree();
 }
 
 bool AudioFileBrowser::isAudioFile (const juce::File& file)
@@ -234,6 +292,125 @@ void AudioFileBrowser::selectFile (const juce::File& file)
     setStatus (selectedFile.existsAsFile()
                    ? "Selecionado: " + selectedFile.getFileName()
                    : "Selecione um arquivo de audio para ouvir");
+}
+
+void AudioFileBrowser::refreshTree()
+{
+    const auto query = search.getText().trim();
+    const auto generation = searchGeneration->fetch_add (1) + 1;
+    searchResults.clear();
+
+    if (query.isEmpty())
+    {
+        tree.setRootItem (new FileTreeItem (*this, {}, showingFavorites
+            ? FileTreeItem::Kind::FavoritesRoot : FileTreeItem::Kind::ComputerRoot));
+        if (tree.getRootItem() != nullptr)
+            tree.getRootItem()->setOpen (true);
+        setStatus ("Selecione um arquivo de audio para ouvir");
+        return;
+    }
+
+    std::vector<juce::File> directories, directMatches;
+    if (showingFavorites)
+    {
+        std::set<juce::String> seenDirectories;
+        for (const auto& favorite : favorites)
+        {
+            if (favorite.file.isDirectory())
+            {
+                const auto path = favorite.file.getFullPathName();
+                if (seenDirectories.insert (path).second)
+                    directories.push_back (favorite.file);
+            }
+            else if (favorite.file.existsAsFile() && isAudioFile (favorite.file)
+                     && favorite.file.getFileName().containsIgnoreCase (query))
+                directMatches.push_back (favorite.file);
+        }
+    }
+    else if (searchDirectory.isDirectory())
+        directories.push_back (searchDirectory);
+    else
+    {
+        juce::Array<juce::File> roots;
+        juce::File::findFileSystemRoots (roots);
+        for (const auto& root : roots)
+            directories.push_back (root);
+    }
+
+    tree.setRootItem (new FileTreeItem (*this, {}, FileTreeItem::Kind::SearchResultsRoot));
+    tree.getRootItem()->setOpen (true);
+    setStatus (showingFavorites ? "Pesquisando nos favoritos..."
+        : searchDirectory.isDirectory()
+            ? "Pesquisando em " + searchDirectory.getFullPathName() + "..."
+            : "Pesquisando em todas as unidades...");
+
+    const auto generationState = searchGeneration;
+    juce::Component::SafePointer<AudioFileBrowser> safeThis (this);
+    searchPool.addJob ([safeThis, directories = std::move (directories),
+                        directMatches = std::move (directMatches), query, generation, generationState]
+    {
+        std::vector<juce::File> results;
+        std::set<juce::String> seenPaths;
+        bool truncated = false;
+
+        const auto addResult = [&] (const juce::File& file)
+        {
+            const auto path = file.getFullPathName();
+            if (seenPaths.count (path) != 0)
+                return true;
+            if (results.size() >= maxSearchResults)
+            {
+                truncated = true;
+                return false;
+            }
+            seenPaths.insert (path);
+            results.push_back (file);
+            return true;
+        };
+
+        for (const auto& file : directMatches)
+            if (! addResult (file))
+                break;
+
+        for (const auto& directory : directories)
+        {
+            if (truncated)
+                break;
+            for (const auto& entry : juce::RangedDirectoryIterator (
+                     directory, true, "*", juce::File::findFiles, juce::File::FollowSymlinks::no))
+            {
+                if (generationState->load() != generation)
+                    return;
+
+                const auto& file = entry.getFile();
+                if (AudioFileBrowser::isAudioFile (file)
+                    && file.getFileName().containsIgnoreCase (query)
+                    && ! addResult (file))
+                    break;
+            }
+        }
+
+        if (generationState->load() != generation)
+            return;
+        std::sort (results.begin(), results.end(), [] (const juce::File& a, const juce::File& b)
+        {
+            return a.getFullPathName().compareIgnoreCase (b.getFullPathName()) < 0;
+        });
+        juce::MessageManager::callAsync ([safeThis, generation, generationState,
+                                           results = std::move (results), truncated]() mutable
+        {
+            if (safeThis == nullptr || generationState->load() != generation)
+                return;
+            safeThis->searchResults = std::move (results);
+            safeThis->tree.setRootItem (new FileTreeItem (
+                *safeThis, {}, FileTreeItem::Kind::SearchResultsRoot));
+            safeThis->tree.getRootItem()->setOpen (true);
+            const auto count = safeThis->searchResults.size();
+            safeThis->setStatus (truncated
+                ? "Mais de " + juce::String (count) + " resultados; limite de exibicao atingido."
+                : juce::String (count) + " arquivo(s) encontrados");
+        });
+    });
 }
 
 void AudioFileBrowser::previewFile (const juce::File& file)
@@ -261,6 +438,8 @@ void AudioFileBrowser::showFavoriteMenu (const juce::File& file, juce::Point<int
     menu.addSubMenu ("Adicionar aos favoritos", colors);
     if (existing != favorites.end())
         menu.addItem (20, "Remover dos favoritos");
+    if (file.existsAsFile() && isAudioFile (file))
+        menu.addItem (21, "Mover arquivo para a Lixeira...");
 
     juce::Component::SafePointer<AudioFileBrowser> safeThis (this);
     const juce::PopupMenu::Options options;
@@ -273,7 +452,47 @@ void AudioFileBrowser::showFavoriteMenu (const juce::File& file, juce::Point<int
                 safeThis->setFavorite (file, result - 1);
             else if (result == 20)
                 safeThis->removeFavorite (file);
+            else if (result == 21)
+                safeThis->deleteFileToTrash (file);
         });
+}
+
+void AudioFileBrowser::deleteFileToTrash (const juce::File& file)
+{
+    if (canDeleteFile && ! canDeleteFile (file))
+    {
+        setStatus ("O arquivo esta em uso no Arrangement e nao pode ser removido.");
+        return;
+    }
+
+    juce::Component::SafePointer<AudioFileBrowser> safeThis (this);
+    juce::AlertWindow::showOkCancelBox (juce::AlertWindow::WarningIcon,
+        "Mover para a Lixeira?",
+        "O arquivo \"" + file.getFileName() + "\" sera movido para a Lixeira do sistema.",
+        "Mover para a Lixeira", "Cancelar", this,
+        juce::ModalCallbackFunction::create ([safeThis, file] (int result)
+        {
+            if (safeThis == nullptr || result == 0)
+                return;
+            if (safeThis->canDeleteFile && ! safeThis->canDeleteFile (file))
+            {
+                safeThis->setStatus ("O arquivo esta em uso no Arrangement e nao pode ser removido.");
+                return;
+            }
+            if (safeThis->selectedFile == file && safeThis->onPreviewStopRequested)
+                safeThis->onPreviewStopRequested();
+            if (! file.moveToTrash())
+            {
+                safeThis->setStatus ("Falha ao mover o arquivo para a Lixeira.");
+                return;
+            }
+            safeThis->favorites.erase (std::remove_if (safeThis->favorites.begin(), safeThis->favorites.end(),
+                [&file] (const Favorite& favorite) { return favorite.file == file; }), safeThis->favorites.end());
+            safeThis->saveFavorites();
+            safeThis->selectFile ({});
+            safeThis->refreshTree();
+            safeThis->setStatus (file.getFileName() + " movido para a Lixeira.");
+        }));
 }
 
 void AudioFileBrowser::setFavorite (const juce::File& file, int color)
@@ -369,6 +588,13 @@ void AudioFileBrowser::populate (FileTreeItem& item)
         });
         for (const auto& file : entries)
             item.addSubItem (new FileTreeItem (*this, file, FileTreeItem::Kind::FavoriteEntry, color));
+        return;
+    }
+
+    if (item.getUniqueName() == "search-results")
+    {
+        for (const auto& file : searchResults)
+            item.addSubItem (new FileTreeItem (*this, file, FileTreeItem::Kind::SearchResultEntry));
         return;
     }
 

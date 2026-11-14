@@ -47,6 +47,50 @@ TEST_CASE("Mover clip entre trilhas preserva as notas")
     REQUIRE(b.clips[0]->clip.notes().size() == 1);
 }
 
+TEST_CASE("Copiar clip MIDI preserva notas e nao altera o original")
+{
+    Track track;
+    auto* original = track.addClip (0.0, 4.0);
+    original->name = "riff";
+    original->clip.addNote ({ 60, 1.0, 2.0, 90 });
+
+    auto* copy = track.copyClip (*original, 4.0);
+    REQUIRE(copy != nullptr);
+    REQUIRE(copy->start == 4.0);
+    REQUIRE(copy->name == "riff");
+    REQUIRE(copy->clip.notes().size() == 1);
+    REQUIRE(copy->clip.notes()[0].pitch == 60);
+    REQUIRE(original->start == 0.0);
+    REQUIRE(track.copyClip (*original, 2.0) == nullptr);
+}
+
+TEST_CASE("Dividir clip MIDI preserva notas e divide notas que cruzam o corte")
+{
+    Track track;
+    auto* original = track.addClip (4.0, 8.0);
+    original->name = "frase";
+    original->clip.addNote ({ 60, 0.0, 2.0, 90 });
+    original->clip.addNote ({ 62, 3.0, 4.0, 80 });
+    original->clip.addNote ({ 64, 6.0, 1.0, 70 });
+
+    const int rightId = track.splitClip (original->id, 8.0);
+    REQUIRE(rightId > 0);
+    REQUIRE(original->start == 4.0);
+    REQUIRE(original->end() == 8.0);
+    REQUIRE(original->clip.notes().size() == 2);
+    REQUIRE(original->clip.notes()[1].lengthBeats == 1.0);
+
+    const auto* right = track.find (rightId);
+    REQUIRE(right != nullptr);
+    REQUIRE(right->name == "frase");
+    REQUIRE(right->start == 8.0);
+    REQUIRE(right->end() == 12.0);
+    REQUIRE(right->clip.notes().size() == 2);
+    REQUIRE(right->clip.notes()[0].startBeats == 0.0);
+    REQUIRE(right->clip.notes()[0].lengthBeats == 3.0);
+    REQUIRE(right->clip.notes()[1].startBeats == 2.0);
+}
+
 TEST_CASE("Clips de audio preservam arquivo, waveform e limites de sobreposicao")
 {
     Track track;
@@ -62,6 +106,75 @@ TEST_CASE("Clips de audio preservam arquivo, waveform e limites de sobreposicao"
     REQUIRE(track.isAudioFree (5.0, 2.0));
     REQUIRE_FALSE(track.isAudioFree (4.0, 2.0));
     REQUIRE(track.isAudioFree (2.0, 3.0, a->id));
+}
+
+TEST_CASE("Dividir clip de audio preserva a origem e separa waveform e offset")
+{
+    Track track;
+    track.type = TrackType::Audio;
+    auto* original = track.addAudioClip (2.0, 8.0, "C:/audio/loop.wav", "loop.wav",
+                                         { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f },
+                                         4.0, 120.0);
+    original->sourceOffsetSeconds = 1.5;
+    original->fadeInBeats = 1.0;
+    original->fadeOutBeats = 1.0;
+
+    const int rightId = track.splitAudioClip (original->id, 6.0);
+    REQUIRE(rightId > 0);
+    REQUIRE(original->start == 2.0);
+    REQUIRE(original->lengthBeats == 4.0);
+    REQUIRE(original->durationSeconds == 2.0);
+    REQUIRE(original->waveform.size() == 4);
+
+    const auto* right = track.findAudioClip (rightId);
+    REQUIRE(right != nullptr);
+    REQUIRE(right->start == 6.0);
+    REQUIRE(right->lengthBeats == 4.0);
+    REQUIRE(right->durationSeconds == 2.0);
+    REQUIRE(right->sourceOffsetSeconds == 3.5);
+    REQUIRE(right->waveform.size() == 4);
+    REQUIRE(right->filePath == original->filePath);
+    REQUIRE(original->fadeInBeats == 1.0);
+    REQUIRE(original->fadeOutBeats == 0.0);
+    REQUIRE(right->fadeInBeats == 0.0);
+    REQUIRE(right->fadeOutBeats == 1.0);
+}
+
+TEST_CASE("Copiar clip de audio preserva offset e fades")
+{
+    Track track;
+    track.type = TrackType::Audio;
+    auto* original = track.addAudioClip (0.0, 4.0, "C:/audio/loop.wav", "loop.wav",
+                                         { 0.2f, 0.8f }, 2.0, 120.0);
+    original->sourceOffsetSeconds = 0.5;
+    original->fadeInBeats = 0.75;
+    original->fadeOutBeats = 1.25;
+
+    auto* copy = track.copyAudioClip (*original, 4.0);
+    REQUIRE(copy != nullptr);
+    REQUIRE(copy->start == 4.0);
+    REQUIRE(copy->sourceOffsetSeconds == 0.5);
+    REQUIRE(copy->fadeInBeats == 0.75);
+    REQUIRE(copy->fadeOutBeats == 1.25);
+    REQUIRE(copy->waveform == original->waveform);
+    REQUIRE(original->start == 0.0);
+    REQUIRE(track.copyAudioClip (*original, 2.0) == nullptr);
+}
+
+TEST_CASE("Dividir clips fora de seus limites nao altera a trilha")
+{
+    Track midi;
+    auto* midiClip = midi.addClip (4.0, 4.0);
+    REQUIRE(midi.splitClip (midiClip->id, 4.0) == -1);
+    REQUIRE(midi.splitClip (midiClip->id, 8.0) == -1);
+    REQUIRE(midi.clips.size() == 1);
+
+    Track audio;
+    audio.type = TrackType::Audio;
+    auto* audioClip = audio.addAudioClip (4.0, 4.0, "C:/audio/one.wav", "one.wav");
+    REQUIRE(audio.splitAudioClip (audioClip->id, 4.0) == -1);
+    REQUIRE(audio.splitAudioClip (audioClip->id, 8.0) == -1);
+    REQUIRE(audio.audioClips.size() == 1);
 }
 
 TEST_CASE("Mover clip de audio preserva seus metadados")
@@ -112,4 +225,20 @@ TEST_CASE("Conversao linear e decibeis com ganho unitario e menos infinito")
     // Silencio / -inf dB
     REQUIRE(gainToDecibels(0.0f) == -60.0f);
     REQUIRE(decibelsToGain(-60.0f) == 0.0f);
+}
+
+TEST_CASE("Copiar uma trilha preserva clips e IDs seguintes")
+{
+    Track original;
+    original.id = 7;
+    original.type = TrackType::Audio;
+    auto* audio = original.addAudioClip (1.0, 2.0, "C:/audio/a.wav", "a.wav", { 0.5f });
+    audio->sourceOffsetSeconds = 0.25;
+
+    Track snapshot (original);
+    REQUIRE(snapshot.id == 7);
+    REQUIRE(snapshot.audioClips.size() == 1);
+    REQUIRE(snapshot.audioClips.front()->id == audio->id);
+    REQUIRE(snapshot.audioClips.front()->sourceOffsetSeconds == 0.25);
+    REQUIRE(snapshot.addAudioClip (4.0, 1.0, "C:/audio/b.wav", "b.wav")->id == audio->id + 1);
 }

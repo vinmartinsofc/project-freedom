@@ -39,6 +39,7 @@ private:
     void setFavoritesVisible (bool);
     void setPianoRollVisible (bool);
     void loadAudioFile (const juce::File&, int trackId, double startBeat);
+    void consolidateAudioRange (double startBeat, double endBeat, int firstTrack, int lastTrack);
     void openAudioClipEditor (int trackId, int clipId);
     void refreshAudioClipEditor();
     void publishAudioTrack (int trackId);

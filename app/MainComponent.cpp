@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "WindowPlacement.h"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <set>
 #include <utility>
@@ -29,6 +30,7 @@ double sourceBpmFromFileName (const juce::File& file, double fallback)
     const double bpm = name.substring (start, numberEnd).getDoubleValue();
     return bpm >= 20.0 && bpm <= 300.0 ? bpm : fallback;
 }
+
 }
 
 class MainComponent::ActionIndicator final : public juce::Component
@@ -293,15 +295,22 @@ MainComponent::MainComponent()
     };
     arrangement.meterProvider = [this] (int id) { return engine.peak (id); };
     arrangement.deviceSummary = [this] (int id) { return deviceSummary (id); };
-    arrangement.canAcceptPluginDrop = [this] (const juce::String& identifier, int)
+    arrangement.canAcceptPluginDrop = [this] (const juce::String& identifier, int trackId)
     {
-        return scanner.list().getTypeForFile (identifier) != nullptr;
+        const auto description = scanner.list().getTypeForFile (identifier);
+        return description != nullptr
+            && (trackId != AudioEngine::masterTrackId || engine.canAcceptPlugin (trackId, *description));
     };
     arrangement.onPluginDropped = [this] (const juce::String& identifier, int trackId, double)
     {
         if (auto description = scanner.list().getTypeForFile (identifier))
         {
             auto* target = project.track (trackId);
+            if (trackId == AudioEngine::masterTrackId && ! engine.canAcceptPlugin (trackId, *description))
+            {
+                browser.setStatus ("A trilha Master aceita apenas efeitos.");
+                return;
+            }
             if (! engine.canAcceptPlugin (trackId, *description))
             {
                 const auto compatible = std::find_if (project.tracks.begin(), project.tracks.end(),
@@ -317,10 +326,10 @@ MainComponent::MainComponent()
             loadDevice (*description);
         }
     };
-    arrangement.canAcceptAudioDrop = [] (const juce::File& file, int)
+    arrangement.canAcceptAudioDrop = [] (const juce::File& file, int trackId)
     {
         const auto extension = file.getFileExtension().toLowerCase();
-        return file.existsAsFile() && (extension == ".wav" || extension == ".wave"
+        return trackId != AudioEngine::masterTrackId && file.existsAsFile() && (extension == ".wav" || extension == ".wave"
             || extension == ".aif" || extension == ".aiff" || extension == ".flac" || extension == ".ogg");
     };
     arrangement.onAudioDropped = [this] (const juce::File& file, int trackId, double beat)
@@ -337,6 +346,18 @@ MainComponent::MainComponent()
     arrangement.onAudioClipDoubleClicked = [this] (int trackId, int clipId)
     {
         openAudioClipEditor (trackId, clipId);
+    };
+    arrangement.onConsolidateRequested = [this] (double startBeat, double endBeat, int firstTrack, int lastTrack)
+    {
+        consolidateAudioRange (startBeat, endBeat, firstTrack, lastTrack);
+    };
+    audioBrowser.canDeleteFile = [this] (const juce::File& file)
+    {
+        for (const auto& track : project.tracks)
+            for (const auto& clip : track->audioClips)
+                if (juce::File (juce::String (clip->filePath)) == file)
+                    return false;
+        return true;
     };
     arrangement.onGridChanged = [this] { refreshAudioClipEditor(); };
     audioBrowser.onPreviewRequested = [this] (const juce::File& file)
@@ -465,10 +486,10 @@ void MainComponent::resized()
     {
         const int maxBrowserWidth = std::max (200, std::min (460, right.getWidth() - 760));
         browserWidth = std::clamp (browserWidth, 200, maxBrowserWidth);
-        const auto bounds = right.removeFromRight (browserWidth);
+        const auto bounds = right.removeFromLeft (browserWidth);
         browser.setBounds (browser.isVisible() ? bounds : juce::Rectangle<int>());
         audioBrowser.setBounds (audioBrowser.isVisible() ? bounds : juce::Rectangle<int>());
-        browserSplitterRect = right.removeFromRight (8);
+        browserSplitterRect = right.removeFromLeft (8);
     }
     else
     {
@@ -560,7 +581,7 @@ void MainComponent::mouseDrag (const juce::MouseEvent& e)
     if (draggingBrowserSplitter)
     {
         const int maxBrowserWidth = std::max (200, std::min (460, getWidth() - 776));
-        browserWidth = std::clamp (getWidth() - 8 - e.x, 200, maxBrowserWidth);
+        browserWidth = std::clamp (e.x - 8, 200, maxBrowserWidth);
         resized();
         repaint();
     }
@@ -687,21 +708,213 @@ void MainComponent::loadAudioFile (const juce::File& file, int trackId, double s
     });
 }
 
+void MainComponent::consolidateAudioRange (double startBeat, double endBeat, int firstTrack, int lastTrack)
+{
+    if (firstTrack != lastTrack || firstTrack < 0 || firstTrack >= static_cast<int> (project.tracks.size())
+        || startBeat < 0.0 || endBeat <= startBeat)
+    {
+        audioBrowser.setStatus ("Consolidar: selecione um trecho de uma unica faixa de audio.");
+        return;
+    }
+
+    auto* track = project.tracks[static_cast<std::size_t> (firstTrack)].get();
+    if (track->type != roll::TrackType::Audio)
+    {
+        audioBrowser.setStatus ("Consolidar: a faixa selecionada precisa ser de audio.");
+        return;
+    }
+
+    constexpr double outputSampleRate = 44100.0;
+    const double bpm = engine.graph().getBpm();
+    if (! std::isfinite (bpm) || bpm <= 0.0)
+    {
+        audioBrowser.setStatus ("Consolidar: o BPM do projeto e invalido.");
+        return;
+    }
+    const double secondsPerBeat = 60.0 / bpm;
+    const double durationSeconds = (endBeat - startBeat) * secondsPerBeat;
+    const auto frameCountDouble = std::ceil (durationSeconds * outputSampleRate);
+    if (! std::isfinite (frameCountDouble) || frameCountDouble < 1.0
+        || durationSeconds > 600.0 || frameCountDouble > static_cast<double> (std::numeric_limits<int>::max()))
+    {
+        audioBrowser.setStatus ("Consolidar: a selecao e grande demais para renderizar (maximo de 10 minutos).");
+        return;
+    }
+
+    auto renderedSamples = std::make_shared<juce::AudioBuffer<float>> (2, static_cast<int> (frameCountDouble));
+    renderedSamples->clear();
+    bool foundSource = false;
+    for (const auto& clip : track->audioClips)
+    {
+        const double overlapStart = std::max (startBeat, clip->start);
+        const double overlapEnd = std::min (endBeat, clip->end());
+        if (overlapEnd <= overlapStart)
+            continue;
+
+        const auto asset = audioAssets.find (clip->filePath);
+        if (asset == audioAssets.end() || asset->second == nullptr || asset->second->samples == nullptr
+            || asset->second->sampleRate <= 0.0)
+        {
+            audioBrowser.setStatus ("Consolidar: nao foi possivel acessar a origem de " + juce::String (clip->name));
+            return;
+        }
+
+        foundSource = true;
+        const auto& source = *asset->second->samples;
+        const int firstFrame = std::max (0, static_cast<int> (std::floor ((overlapStart - startBeat)
+                                                                           * secondsPerBeat * outputSampleRate)));
+        const int lastFrame = std::min (renderedSamples->getNumSamples(),
+            static_cast<int> (std::ceil ((overlapEnd - startBeat) * secondsPerBeat * outputSampleRate)));
+        for (int frame = firstFrame; frame < lastFrame; ++frame)
+        {
+            const double beat = startBeat + static_cast<double> (frame) / (secondsPerBeat * outputSampleRate);
+            if (beat < clip->start || beat >= clip->end())
+                continue;
+
+            const double sourcePosition = (clip->sourceOffsetSeconds
+                + (beat - clip->start) * secondsPerBeat) * asset->second->sampleRate;
+            if (! std::isfinite (sourcePosition) || sourcePosition < 0.0
+                || sourcePosition >= source.getNumSamples())
+                continue;
+            const int sourceIndex = static_cast<int> (sourcePosition);
+            const int nextIndex = std::min (sourceIndex + 1, source.getNumSamples() - 1);
+            const float fraction = static_cast<float> (sourcePosition - sourceIndex);
+            double gain = 1.0;
+            if (clip->fadeInBeats > 0.0)
+                gain *= std::clamp ((beat - clip->start) / clip->fadeInBeats, 0.0, 1.0);
+            if (clip->fadeOutBeats > 0.0)
+                gain *= std::clamp ((clip->end() - beat) / clip->fadeOutBeats, 0.0, 1.0);
+
+            for (int channel = 0; channel < renderedSamples->getNumChannels(); ++channel)
+            {
+                const int sourceChannel = std::min (channel, source.getNumChannels() - 1);
+                const float sample = source.getSample (sourceChannel, sourceIndex)
+                    + (source.getSample (sourceChannel, nextIndex) - source.getSample (sourceChannel, sourceIndex)) * fraction;
+                renderedSamples->addSample (channel, frame, sample * static_cast<float> (gain));
+            }
+        }
+    }
+
+    if (! foundSource)
+    {
+        audioBrowser.setStatus ("Consolidar: nao ha clips de audio na selecao.");
+        return;
+    }
+
+    auto outputDirectory = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                              .getChildFile ("ProjectFreedom").getChildFile ("Consolidated");
+    if (const auto error = outputDirectory.createDirectory(); error.failed())
+    {
+        audioBrowser.setStatus ("Consolidar: nao foi possivel criar a pasta de destino: " + error.getErrorMessage());
+        return;
+    }
+    const auto outputFile = outputDirectory.getNonexistentChildFile (
+        "Consolidated_" + juce::Time::getCurrentTime().formatted ("%Y%m%d_%H%M%S"),
+        ".wav", false);
+    auto fileStream = std::make_unique<juce::FileOutputStream> (outputFile);
+    if (! fileStream->openedOk())
+    {
+        audioBrowser.setStatus ("Consolidar: nao foi possivel criar o WAV.");
+        return;
+    }
+    std::unique_ptr<juce::OutputStream> outputStream (std::move (fileStream));
+    juce::WavAudioFormat wavFormat;
+    const juce::AudioFormatWriterOptions writerOptions;
+    auto writer = wavFormat.createWriterFor (outputStream,
+        writerOptions.withSampleRate (outputSampleRate).withNumChannels (2).withBitsPerSample (24));
+    if (writer == nullptr || ! writer->writeFromAudioSampleBuffer (*renderedSamples, 0, renderedSamples->getNumSamples()))
+    {
+        writer.reset();
+        outputStream.reset();
+        outputFile.deleteFile();
+        audioBrowser.setStatus ("Consolidar: falha ao gravar o arquivo WAV.");
+        return;
+    }
+    writer.reset();
+
+    auto data = std::make_shared<AudioFileData>();
+    data->file = outputFile;
+    data->samples = renderedSamples;
+    data->sampleRate = outputSampleRate;
+    data->durationSeconds = durationSeconds;
+    constexpr int waveformBins = 512;
+    data->waveform.resize (waveformBins, 0.0f);
+    for (int bin = 0; bin < waveformBins; ++bin)
+    {
+        const int from = bin * renderedSamples->getNumSamples() / waveformBins;
+        const int to = std::max (from + 1, (bin + 1) * renderedSamples->getNumSamples() / waveformBins);
+        float peak = 0.0f;
+        for (int frame = from; frame < std::min (to, renderedSamples->getNumSamples()); ++frame)
+            for (int channel = 0; channel < renderedSamples->getNumChannels(); ++channel)
+                peak = std::max (peak, std::abs (renderedSamples->getSample (channel, frame)));
+        data->waveform[static_cast<std::size_t> (bin)] = peak;
+    }
+
+    const int trackId = track->id;
+    std::vector<int> overlappingIds;
+    for (const auto& clip : track->audioClips)
+        if (clip->start < endBeat && clip->end() > startBeat)
+            overlappingIds.push_back (clip->id);
+
+    project.beginEdit();
+    bool replaced = true;
+    for (const int clipId : overlappingIds)
+    {
+        auto* clip = track->findAudioClip (clipId);
+        if (clip == nullptr)
+            continue;
+        int innerClipId = clipId;
+        if (clip->start < startBeat && clip->end() > startBeat)
+        {
+            innerClipId = project.splitAudioClip (trackId, clipId, startBeat);
+            if (innerClipId < 0)
+            {
+                replaced = false;
+                break;
+            }
+        }
+
+        clip = track->findAudioClip (innerClipId);
+        if (clip != nullptr && clip->end() > endBeat)
+            project.splitAudioClip (trackId, innerClipId, endBeat);
+        clip = track->findAudioClip (innerClipId);
+        if (clip != nullptr && clip->start >= startBeat - 1.0e-9
+            && clip->end() <= endBeat + 1.0e-9)
+            project.deleteAudioClip (trackId, innerClipId);
+    }
+
+    const auto path = outputFile.getFullPathName().toStdString();
+    audioAssets[path] = data;
+    if (replaced && project.addAudioClip (trackId, startBeat, endBeat - startBeat, path,
+                                          outputFile.getFileName().toStdString(), data->waveform,
+                                          durationSeconds, bpm) == nullptr)
+        replaced = false;
+    project.endEdit();
+    if (! replaced)
+    {
+        project.undo();
+        audioAssets.erase (path);
+        outputFile.deleteFile();
+        audioBrowser.setStatus ("Consolidar: nao foi possivel substituir a selecao.");
+        return;
+    }
+
+    audioBrowser.setStatus ("Selecao consolidada: " + outputFile.getFileName());
+}
+
 void MainComponent::publishAudioTrack (int trackId)
 {
     std::vector<AudioClipPlayback> clips;
     if (const auto* track = project.track (trackId); track != nullptr && track->type == roll::TrackType::Audio)
         for (const auto& clip : track->audioClips)
             if (const auto asset = audioAssets.find (clip->filePath); asset != audioAssets.end())
-                clips.push_back ({ clip->start, clip->lengthBeats, clip->sourceBpm, asset->second });
+                clips.push_back ({ clip->start, clip->lengthBeats, clip->sourceBpm,
+                                   clip->sourceOffsetSeconds, clip->fadeInBeats,
+                                   clip->fadeOutBeats, asset->second });
     engine.publishAudioClips (trackId, clips);
 
-    std::set<std::string> activePaths;
-    for (const auto& track : project.tracks)
-        for (const auto& clip : track->audioClips)
-            activePaths.insert (clip->filePath);
     for (auto it = audioAssets.begin(); it != audioAssets.end();)
-        if (activePaths.count (it->first) == 0)
+        if (! project.retainsAudioFile (it->first))
             it = audioAssets.erase (it);
         else
             ++it;
@@ -799,6 +1012,13 @@ void MainComponent::loopSelectedTrack()
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
+    const bool ctrl = k.getModifiers().isCtrlDown() || k.getModifiers().isCommandDown();
+    const auto keyCode = juce::CharacterFunctions::toUpperCase (static_cast<juce::juce_wchar> (k.getKeyCode()));
+    if (ctrl && keyCode == 'Z' && ! k.getModifiers().isShiftDown())
+        return project.undo();
+    if (ctrl && (keyCode == 'Y' || (keyCode == 'Z' && k.getModifiers().isShiftDown())))
+        return project.redo();
+
     if (k.getModifiers().isCtrlDown()
         && juce::CharacterFunctions::toLowerCase (k.getKeyCode()) == 'b')
     {
@@ -821,13 +1041,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress (juce::KeyPress::F6Key)) { cycleFocus(); return true; }
     if (k.getModifiers().isCtrlDown() && k.getModifiers().isShiftDown())
     {
-        const auto key = juce::CharacterFunctions::toUpperCase (static_cast<juce::juce_wchar> (k.getKeyCode()));
-        if (key == 'T')
+        const auto shiftedKey = juce::CharacterFunctions::toUpperCase (static_cast<juce::juce_wchar> (k.getKeyCode()));
+        if (shiftedKey == 'T')
         {
             project.addTrack();
             return true;
         }
-        if (key == 'A')
+        if (shiftedKey == 'A')
         {
             project.addTrack (roll::TrackType::Audio);
             return true;

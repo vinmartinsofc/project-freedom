@@ -4,6 +4,40 @@
 
 namespace roll
 {
+Track::Track (const Track& other)
+    : id (other.id), name (other.name), type (other.type), volume (other.volume),
+      pan (other.pan), mute (other.mute), solo (other.solo), outputRouting (other.outputRouting),
+      nextId (other.nextId)
+{
+    for (const auto& clip : other.clips)
+        clips.push_back (std::make_unique<Placement> (*clip));
+    for (const auto& clip : other.audioClips)
+        audioClips.push_back (std::make_unique<AudioPlacement> (*clip));
+}
+
+Track& Track::operator= (const Track& other)
+{
+    if (this == &other)
+        return *this;
+
+    id = other.id;
+    name = other.name;
+    type = other.type;
+    volume = other.volume;
+    pan = other.pan;
+    mute = other.mute;
+    solo = other.solo;
+    outputRouting = other.outputRouting;
+    nextId = other.nextId;
+    clips.clear();
+    audioClips.clear();
+    for (const auto& clip : other.clips)
+        clips.push_back (std::make_unique<Placement> (*clip));
+    for (const auto& clip : other.audioClips)
+        audioClips.push_back (std::make_unique<AudioPlacement> (*clip));
+    return *this;
+}
+
 Placement* Track::addClip (double start, double length)
 {
     auto p = std::make_unique<Placement>();
@@ -18,6 +52,63 @@ Placement* Track::find (int clipId) const
 {
     for (const auto& c : clips) if (c->id == clipId) return c.get();
     return nullptr;
+}
+
+Placement* Track::copyClip (const Placement& source, double start)
+{
+    if (type != TrackType::Midi || ! std::isfinite (start) || start < 0.0
+        || ! isFree (start, source.clip.length()))
+        return nullptr;
+
+    auto* copy = addClip (start, source.clip.length());
+    copy->name = source.name;
+    copy->clip.setNotes (source.clip.notes());
+    return copy;
+}
+
+int Track::splitClip (int clipId, double beat)
+{
+    constexpr double eps = 1.0e-9;
+    auto* clip = find (clipId);
+    if (type != TrackType::Midi || clip == nullptr || ! std::isfinite (beat))
+        return -1;
+
+    const double offset = beat - clip->start;
+    const double oldLength = clip->clip.length();
+    const double rightLength = oldLength - offset;
+    if (offset <= eps || rightLength <= eps || ! isFree (beat, rightLength, clipId))
+        return -1;
+
+    std::vector<Note> leftNotes, rightNotes;
+    for (const auto& note : clip->clip.notes())
+    {
+        const double noteEnd = note.endBeats();
+        if (note.startBeats < offset)
+        {
+            auto left = note;
+            left.lengthBeats = std::min (noteEnd, offset) - note.startBeats;
+            if (left.lengthBeats > eps)
+                leftNotes.push_back (left);
+        }
+
+        if (noteEnd > offset)
+        {
+            auto right = note;
+            const double rightStart = std::max (note.startBeats, offset);
+            right.startBeats = rightStart - offset;
+            right.lengthBeats = noteEnd - rightStart;
+            if (right.lengthBeats > eps)
+                rightNotes.push_back (right);
+        }
+    }
+
+    const std::string name = clip->name;
+    clip->clip.setLength (offset);
+    clip->clip.setNotes (std::move (leftNotes));
+    auto* right = addClip (beat, rightLength);
+    right->name = name;
+    right->clip.setNotes (std::move (rightNotes));
+    return right->id;
 }
 
 std::unique_ptr<Placement> Track::take (int clipId)
@@ -74,6 +165,72 @@ AudioPlacement* Track::findAudioClip (int clipId) const
         if (clip->id == clipId)
             return clip.get();
     return nullptr;
+}
+
+AudioPlacement* Track::copyAudioClip (const AudioPlacement& source, double start)
+{
+    if (type != TrackType::Audio || ! std::isfinite (start) || start < 0.0
+        || ! isAudioFree (start, source.lengthBeats))
+        return nullptr;
+
+    auto* copy = addAudioClip (start, source.lengthBeats, source.filePath, source.name,
+                               source.waveform, source.durationSeconds, source.sourceBpm);
+    copy->sourceOffsetSeconds = source.sourceOffsetSeconds;
+    copy->fadeInBeats = source.fadeInBeats;
+    copy->fadeOutBeats = source.fadeOutBeats;
+    return copy;
+}
+
+int Track::splitAudioClip (int clipId, double beat)
+{
+    constexpr double eps = 1.0e-9;
+    auto* clip = findAudioClip (clipId);
+    if (type != TrackType::Audio || clip == nullptr || ! std::isfinite (beat))
+        return -1;
+
+    const double offset = beat - clip->start;
+    const double oldLength = clip->lengthBeats;
+    const double rightLength = oldLength - offset;
+    if (offset <= eps || rightLength <= eps || ! isAudioFree (beat, rightLength, clipId))
+        return -1;
+
+    const double fraction = offset / oldLength;
+    const double leftDuration = clip->durationSeconds * fraction;
+    const double rightDuration = clip->durationSeconds - leftDuration;
+    const double rightSourceOffset = clip->sourceOffsetSeconds + leftDuration;
+    std::vector<float> leftWaveform, rightWaveform;
+    if (clip->waveform.size() > 1)
+    {
+        const auto splitIndex = static_cast<std::size_t> (std::clamp (
+            static_cast<int> (std::lround (clip->waveform.size() * fraction)), 1,
+            static_cast<int> (clip->waveform.size()) - 1));
+        leftWaveform.assign (clip->waveform.begin(), clip->waveform.begin() + static_cast<std::ptrdiff_t> (splitIndex));
+        rightWaveform.assign (clip->waveform.begin() + static_cast<std::ptrdiff_t> (splitIndex), clip->waveform.end());
+    }
+    else
+    {
+        leftWaveform = clip->waveform;
+        rightWaveform = clip->waveform;
+    }
+
+    const auto filePath = clip->filePath;
+    const auto name = clip->name;
+    const double sourceBpm = clip->sourceBpm;
+    const double sourceOffset = clip->sourceOffsetSeconds;
+    const double fadeIn = clip->fadeInBeats;
+    const double fadeOut = clip->fadeOutBeats;
+    clip->lengthBeats = offset;
+    clip->durationSeconds = leftDuration;
+    clip->waveform = std::move (leftWaveform);
+    clip->fadeInBeats = std::min (fadeIn, offset);
+    clip->fadeOutBeats = std::max (0.0, fadeOut - rightLength);
+
+    auto* right = addAudioClip (beat, rightLength, filePath, name, std::move (rightWaveform),
+                                rightDuration, sourceBpm);
+    right->sourceOffsetSeconds = rightSourceOffset;
+    right->fadeInBeats = std::max (0.0, fadeIn - offset);
+    right->fadeOutBeats = std::min (fadeOut, rightLength);
+    return right->id;
 }
 
 std::unique_ptr<AudioPlacement> Track::takeAudioClip (int clipId)

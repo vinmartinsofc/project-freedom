@@ -26,6 +26,9 @@ struct AudioPlacement
     double      start = 0.0;
     double      lengthBeats = 0.0;
     double      durationSeconds = 0.0;
+    double      sourceOffsetSeconds = 0.0;
+    double      fadeInBeats = 0.0;
+    double      fadeOutBeats = 0.0;
     double      sourceBpm = 120.0;
     std::string name, filePath;
     std::vector<float> waveform;
@@ -37,6 +40,12 @@ struct AudioPlacement
 class Track
 {
 public:
+    Track() = default;
+    Track (const Track&);
+    Track& operator= (const Track&);
+    Track (Track&&) noexcept = default;
+    Track& operator= (Track&&) noexcept = default;
+
     int         id = 0;
     std::string name;
     TrackType   type = TrackType::Midi;
@@ -51,6 +60,8 @@ public:
 
     Placement* addClip (double start, double length);
     Placement* find (int clipId) const;
+    Placement* copyClip (const Placement& source, double start);
+    int splitClip (int clipId, double beat);
     std::unique_ptr<Placement> take (int clipId);          // tira da trilha (para mover entre trilhas)
     void put (std::unique_ptr<Placement> p);
     bool remove (int clipId);
@@ -62,6 +73,8 @@ public:
                                   std::string name, std::vector<float> waveform = {},
                                   double durationSeconds = 0.0, double sourceBpm = 120.0);
     AudioPlacement* findAudioClip (int clipId) const;
+    AudioPlacement* copyAudioClip (const AudioPlacement& source, double start);
+    int splitAudioClip (int clipId, double beat);
     std::unique_ptr<AudioPlacement> takeAudioClip (int clipId);
     void putAudioClip (std::unique_ptr<AudioPlacement> clip);
     bool removeAudioClip (int clipId);

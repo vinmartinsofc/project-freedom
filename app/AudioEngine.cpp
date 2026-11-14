@@ -178,10 +178,9 @@ void TrackAudioSource::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
                 continue;
 
             const auto& source = *clip.source->samples;
-            // Reproduz na velocidade original do arquivo (sem time-stretch),
-            // identico ao comportamento do AudioPreviewSource.
             const double sourceStep = clip.source->sampleRate / outputRate;
-            const double sourceStart = (activeStart - clip.startBeat)
+            const double sourceStart = clip.sourceOffsetSeconds * clip.source->sampleRate
+                                     + (activeStart - clip.startBeat)
                                        / shared.plan.beatsPerSample * sourceStep;
             const int outputStart = segment.offset + static_cast<int> (std::lround ((activeStart - segment.a) / shared.plan.beatsPerSample));
             const int outputEnd = std::min (buffer.getNumSamples(),
@@ -198,12 +197,20 @@ void TrackAudioSource::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
                 const int nextIndex = std::min (sourceIndex + 1, source.getNumSamples() - 1);
                 const float fraction = static_cast<float> (sourcePosition - sourceIndex);
+                const double beat = activeStart + i * shared.plan.beatsPerSample;
+                double gain = 1.0;
+                if (clip.fadeInBeats > 0.0)
+                    gain *= std::clamp ((beat - clip.startBeat) / clip.fadeInBeats, 0.0, 1.0);
+                if (clip.fadeOutBeats > 0.0)
+                    gain *= std::clamp ((clip.startBeat + clip.lengthBeats - beat)
+                                        / clip.fadeOutBeats, 0.0, 1.0);
                 for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
                 {
                     const int sourceChannel = std::min (channel, source.getNumChannels() - 1);
                     const float first = source.getSample (sourceChannel, sourceIndex);
                     const float next = source.getSample (sourceChannel, nextIndex);
-                    buffer.addSample (channel, outputStart + i, first + (next - first) * fraction);
+                    buffer.addSample (channel, outputStart + i,
+                                      (first + (next - first) * fraction) * static_cast<float> (gain));
                 }
             }
         }

@@ -11,6 +11,127 @@ ProjectModel::ProjectModel()
     masterTrack->pan = 0.0;
 }
 
+ProjectModel::Snapshot ProjectModel::makeSnapshot() const
+{
+    Snapshot snapshot;
+    snapshot.tracks.reserve (tracks.size());
+    for (const auto& track : tracks)
+        snapshot.tracks.push_back (*track);
+    snapshot.selectedTrackId = selectedTrackId;
+    snapshot.selectedClipId = selectedClipId;
+    snapshot.selectedAudioClipId = selectedAudioClipId;
+    snapshot.nextTrackId = nextTrackId;
+    snapshot.loopStart = loopStart;
+    snapshot.loopEnd = loopEnd;
+    snapshot.totalBeats = totalBeats;
+    return snapshot;
+}
+
+void ProjectModel::restoreSnapshot (Snapshot&& snapshot)
+{
+    tracks.clear();
+    tracks.reserve (snapshot.tracks.size());
+    for (const auto& track : snapshot.tracks)
+        tracks.push_back (std::make_unique<roll::Track> (track));
+
+    selectedTrackId = snapshot.selectedTrackId;
+    selectedClipId = snapshot.selectedClipId;
+    selectedAudioClipId = snapshot.selectedAudioClipId;
+    nextTrackId = snapshot.nextTrackId;
+    loopStart = snapshot.loopStart;
+    loopEnd = snapshot.loopEnd;
+    totalBeats = snapshot.totalBeats;
+
+    for (const auto& track : tracks)
+    {
+        if (track->type == roll::TrackType::Audio)
+        {
+            if (onAudioClipsChanged) onAudioClipsChanged (track->id);
+        }
+        else if (onTrackNotes)
+            onTrackNotes (track->id);
+    }
+    if (onSelectionChanged) onSelectionChanged();
+    if (onMixerChanged) onMixerChanged();
+    if (onLoopChanged) onLoopChanged();
+    sendChangeMessage();
+}
+
+void ProjectModel::recordUndo()
+{
+    if (! editInProgress)
+    {
+        undoStack.push_back (makeSnapshot());
+        if (undoStack.size() > 200)
+            undoStack.erase (undoStack.begin());
+    }
+    redoStack.clear();
+}
+
+void ProjectModel::beginEdit()
+{
+    if (editInProgress)
+        return;
+    editInProgress = true;
+    undoStack.push_back (makeSnapshot());
+    if (undoStack.size() > 200)
+        undoStack.erase (undoStack.begin());
+    redoStack.clear();
+}
+
+void ProjectModel::endEdit()
+{
+    editInProgress = false;
+}
+
+bool ProjectModel::undo()
+{
+    endEdit();
+    if (undoStack.empty())
+        return false;
+    redoStack.push_back (makeSnapshot());
+    auto snapshot = std::move (undoStack.back());
+    undoStack.pop_back();
+    restoreSnapshot (std::move (snapshot));
+    return true;
+}
+
+bool ProjectModel::redo()
+{
+    endEdit();
+    if (redoStack.empty())
+        return false;
+    undoStack.push_back (makeSnapshot());
+    auto snapshot = std::move (redoStack.back());
+    redoStack.pop_back();
+    restoreSnapshot (std::move (snapshot));
+    return true;
+}
+
+bool ProjectModel::retainsAudioFile (const std::string& path) const
+{
+    const auto containsPath = [&path] (const std::vector<roll::Track>& snapshotTracks)
+    {
+        for (const auto& track : snapshotTracks)
+            for (const auto& clip : track.audioClips)
+                if (clip->filePath == path)
+                    return true;
+        return false;
+    };
+
+    for (const auto& track : tracks)
+        for (const auto& clip : track->audioClips)
+            if (clip->filePath == path)
+                return true;
+    for (const auto& snapshot : undoStack)
+        if (containsPath (snapshot.tracks))
+            return true;
+    for (const auto& snapshot : redoStack)
+        if (containsPath (snapshot.tracks))
+            return true;
+    return false;
+}
+
 roll::Track* ProjectModel::track (int id) const
 {
     if (id == 0) return masterTrack.get();
@@ -117,11 +238,59 @@ roll::Placement* ProjectModel::addClip (int trackId, double start, double length
 {
     auto* t = track (trackId);
     if (t == nullptr || t->type != roll::TrackType::Midi || ! t->isFree (start, length)) return nullptr;
+    recordUndo();
     auto* p = t->addClip (start, length);
     growTo (p->end() + 64.0);
     selectClip (trackId, p->id);
     notifyTrackNotes (trackId);
     return p;
+}
+
+int ProjectModel::copyClip (int fromTrack, int clipId, int toTrack, double start)
+{
+    auto* sourceTrack = track (fromTrack);
+    auto* destinationTrack = track (toTrack);
+    auto* source = sourceTrack != nullptr ? sourceTrack->find (clipId) : nullptr;
+    if (source == nullptr || destinationTrack == nullptr)
+        return -1;
+
+    if (! destinationTrack->isFree (start, source->clip.length()))
+        return -1;
+    recordUndo();
+    auto* copy = destinationTrack->copyClip (*source, start);
+    if (copy == nullptr)
+        return -1;
+
+    growTo (copy->end() + 64.0);
+    selectClip (toTrack, copy->id);
+    notifyTrackNotes (toTrack);
+    sendChangeMessage();
+    return copy->id;
+}
+
+int ProjectModel::duplicateClip (int trackId, int clipId)
+{
+    auto* t = track (trackId);
+    auto* source = t != nullptr ? t->find (clipId) : nullptr;
+    if (source == nullptr)
+        return -1;
+
+    const double length = source->clip.length();
+    double start = source->end();
+    for (int attempt = 0; attempt < 64; ++attempt, start += length)
+        if (t->isFree (start, length))
+        {
+            recordUndo();
+            auto* copy = t->copyClip (*source, start);
+            if (copy == nullptr)
+                return -1;
+            growTo (copy->end() + 64.0);
+            selectClip (trackId, copy->id);
+            notifyTrackNotes (trackId);
+            sendChangeMessage();
+            return copy->id;
+        }
+    return -1;
 }
 
 roll::AudioPlacement* ProjectModel::addAudioClip (int trackId, double start, double length,
@@ -135,6 +304,7 @@ roll::AudioPlacement* ProjectModel::addAudioClip (int trackId, double start, dou
         || ! t->isAudioFree (start, length))
         return nullptr;
 
+    recordUndo();
     auto* clip = t->addAudioClip (start, length, filePath, name, waveform, durationSeconds, sourceBpm);
     growTo (clip->end() + 64.0);
     selectAudioClip (trackId, clip->id);
@@ -147,6 +317,7 @@ void ProjectModel::deleteClip (int trackId, int clipId)
     auto* t = track (trackId);
     if (t == nullptr || t->find (clipId) == nullptr) return;
 
+    recordUndo();
     if (selectedTrackId == trackId && selectedClipId == clipId)
     {
         selectedClipId = -1;
@@ -157,10 +328,31 @@ void ProjectModel::deleteClip (int trackId, int clipId)
     sendChangeMessage();
 }
 
+int ProjectModel::splitClip (int trackId, int clipId, double beat)
+{
+    auto* t = track (trackId);
+    auto* source = t != nullptr ? t->find (clipId) : nullptr;
+    if (t == nullptr || source == nullptr || beat <= source->start
+        || beat >= source->end() || ! t->isFree (beat, source->end() - beat, clipId))
+        return -1;
+
+    recordUndo();
+    const int newId = t->splitClip (clipId, beat);
+    if (newId < 0)
+        return -1;
+
+    growTo (beat + 64.0);
+    selectClip (trackId, newId);
+    notifyTrackNotes (trackId);
+    sendChangeMessage();
+    return newId;
+}
+
 void ProjectModel::deleteAudioClip (int trackId, int clipId)
 {
     auto* t = track (trackId);
     if (t == nullptr || t->findAudioClip (clipId) == nullptr) return;
+    recordUndo();
     if (selectedTrackId == trackId && selectedAudioClipId == clipId)
     {
         selectedAudioClipId = -1;
@@ -171,6 +363,74 @@ void ProjectModel::deleteAudioClip (int trackId, int clipId)
     sendChangeMessage();
 }
 
+int ProjectModel::copyAudioClip (int fromTrack, int clipId, int toTrack, double start)
+{
+    auto* sourceTrack = track (fromTrack);
+    auto* destinationTrack = track (toTrack);
+    auto* source = sourceTrack != nullptr ? sourceTrack->findAudioClip (clipId) : nullptr;
+    if (source == nullptr || destinationTrack == nullptr)
+        return -1;
+
+    if (! destinationTrack->isAudioFree (start, source->lengthBeats))
+        return -1;
+    recordUndo();
+    auto* copy = destinationTrack->copyAudioClip (*source, start);
+    if (copy == nullptr)
+        return -1;
+
+    growTo (copy->end() + 64.0);
+    selectAudioClip (toTrack, copy->id);
+    if (onAudioClipsChanged) onAudioClipsChanged (toTrack);
+    sendChangeMessage();
+    return copy->id;
+}
+
+int ProjectModel::duplicateAudioClip (int trackId, int clipId)
+{
+    auto* t = track (trackId);
+    auto* source = t != nullptr ? t->findAudioClip (clipId) : nullptr;
+    if (source == nullptr)
+        return -1;
+
+    const double length = source->lengthBeats;
+    double start = source->end();
+    for (int attempt = 0; attempt < 64; ++attempt, start += length)
+        if (t->isAudioFree (start, length))
+        {
+            recordUndo();
+            auto* copy = t->copyAudioClip (*source, start);
+            if (copy == nullptr)
+                return -1;
+            growTo (copy->end() + 64.0);
+            selectAudioClip (trackId, copy->id);
+            if (onAudioClipsChanged) onAudioClipsChanged (trackId);
+            sendChangeMessage();
+            return copy->id;
+        }
+    return -1;
+}
+
+int ProjectModel::splitAudioClip (int trackId, int clipId, double beat)
+{
+    auto* t = track (trackId);
+    auto* source = t != nullptr ? t->findAudioClip (clipId) : nullptr;
+    if (t == nullptr || source == nullptr || beat <= source->start
+        || beat >= source->end() || ! t->isAudioFree (beat, source->end() - beat, clipId))
+        return -1;
+
+    recordUndo();
+    const int newId = t->splitAudioClip (clipId, beat);
+    if (newId < 0)
+        return -1;
+
+    if (auto* clip = t->findAudioClip (newId))
+        growTo (clip->end() + 64.0);
+    selectAudioClip (trackId, newId);
+    if (onAudioClipsChanged) onAudioClipsChanged (trackId);
+    sendChangeMessage();
+    return newId;
+}
+
 bool ProjectModel::resizeAudioClip (int trackId, int clipId, double length)
 {
     auto* t = track (trackId);
@@ -178,8 +438,33 @@ bool ProjectModel::resizeAudioClip (int trackId, int clipId, double length)
     if (t == nullptr || t->type != roll::TrackType::Audio || clip == nullptr || length <= 0.0
         || ! t->isAudioFree (clip->start, length, clipId))
         return false;
+    recordUndo();
     clip->lengthBeats = length;
+    clip->fadeInBeats = std::min (clip->fadeInBeats, length);
+    clip->fadeOutBeats = std::min (clip->fadeOutBeats, length);
     growTo (clip->end() + 64.0);
+    if (onAudioClipsChanged) onAudioClipsChanged (trackId);
+    sendChangeMessage();
+    return true;
+}
+
+bool ProjectModel::setAudioClipFades (int trackId, int clipId, double fadeInBeats,
+                                      double fadeOutBeats)
+{
+    auto* t = track (trackId);
+    auto* clip = t != nullptr ? t->findAudioClip (clipId) : nullptr;
+    if (t == nullptr || t->type != roll::TrackType::Audio || clip == nullptr
+        || ! std::isfinite (fadeInBeats) || ! std::isfinite (fadeOutBeats)
+        || fadeInBeats < 0.0 || fadeOutBeats < 0.0
+        || fadeInBeats > clip->lengthBeats || fadeOutBeats > clip->lengthBeats)
+        return false;
+
+    if (clip->fadeInBeats == fadeInBeats && clip->fadeOutBeats == fadeOutBeats)
+        return true;
+
+    recordUndo();
+    clip->fadeInBeats = fadeInBeats;
+    clip->fadeOutBeats = fadeOutBeats;
     if (onAudioClipsChanged) onAudioClipsChanged (trackId);
     sendChangeMessage();
     return true;
@@ -197,8 +482,11 @@ bool ProjectModel::setAudioClipSourceBpm (int trackId, int clipId, double source
     if (! t->isAudioFree (clip->start, newLength, clipId))
         return false;
 
+    recordUndo();
     clip->sourceBpm = sourceBpm;
     clip->lengthBeats = newLength;
+    clip->fadeInBeats = std::min (clip->fadeInBeats, newLength);
+    clip->fadeOutBeats = std::min (clip->fadeOutBeats, newLength);
     growTo (clip->end() + 64.0);
     if (onAudioClipsChanged) onAudioClipsChanged (trackId);
     sendChangeMessage();
@@ -220,6 +508,8 @@ int ProjectModel::moveClip (int fromTrack, int clipId, int toTrack, double newSt
     if (fromTrack == toTrack)
     {
         if (! src->isFree (newStart, len, clipId)) return -1;
+        if (std::abs (p->start - newStart) <= 1.0e-9) return clipId;
+        recordUndo();
         p->start = newStart;
         growTo (p->end() + 64.0);
         notifyTrackNotes (fromTrack);
@@ -228,6 +518,7 @@ int ProjectModel::moveClip (int fromTrack, int clipId, int toTrack, double newSt
     }
 
     if (! dst->isFree (newStart, len)) return -1;
+    recordUndo();
     auto taken = src->take (clipId);
     taken->start = newStart;
     dst->put (std::move (taken));
@@ -261,6 +552,8 @@ int ProjectModel::moveAudioClip (int fromTrack, int clipId, int toTrack, double 
     if (fromTrack == toTrack)
     {
         if (! src->isAudioFree (newStart, length, clipId)) return -1;
+        if (std::abs (clip->start - newStart) <= 1.0e-9) return clipId;
+        recordUndo();
         clip->start = newStart;
         growTo (clip->end() + 64.0);
         if (onAudioClipsChanged) onAudioClipsChanged (fromTrack);
@@ -269,6 +562,7 @@ int ProjectModel::moveAudioClip (int fromTrack, int clipId, int toTrack, double 
     }
 
     if (! dst->isAudioFree (newStart, length)) return -1;
+    recordUndo();
     auto moved = src->takeAudioClip (clipId);
     moved->start = newStart;
     dst->putAudioClip (std::move (moved));

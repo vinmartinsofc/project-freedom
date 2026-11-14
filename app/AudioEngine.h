@@ -144,6 +144,9 @@ struct AudioClipPlayback
     double startBeat = 0.0;
     double lengthBeats = 0.0;
     double sourceBpm = 120.0;
+    double sourceOffsetSeconds = 0.0;
+    double fadeInBeats = 0.0;
+    double fadeOutBeats = 0.0;
     std::shared_ptr<const AudioFileData> source;
 };
 

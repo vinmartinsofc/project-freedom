@@ -64,6 +64,23 @@ void PluginScanner::run()
         }
     }
 
+    if (threadShouldExit())
+        return;
+
+    for (const auto& type : knownList.getTypes())
+    {
+        for (int i = 0; i < formatManager.getNumFormats(); ++i)
+        {
+            auto* format = formatManager.getFormat (i);
+            if (type.pluginFormatName == format->getName())
+            {
+                if (! format->fileMightContainThisPluginType (type.fileOrIdentifier))
+                    knownList.removeType (type);
+                break;
+            }
+        }
+    }
+
     saveList();
     juce::MessageManager::callAsync ([this, flag]
     {
